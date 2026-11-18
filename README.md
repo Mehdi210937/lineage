@@ -56,8 +56,9 @@ redemandées.
 Les voisins d'un artiste sont ses relations MusicBrainz (membres, alias, collaborations), ses
 influences Wikidata **et les autres artistes de ses labels de niche** : seuls les labels ayant au plus
 `--label-max-releases` sorties au total sont explorés (300 par défaut, `0` désactive l'expansion).
-Sur une base déjà crawlée, le run suivant explore d'abord les labels des artistes déjà traités, à partir
-du cache (seules les requêtes sur les labels sont nouvelles).
+On peut **augmenter `--depth` d'un run à l'autre** : au début de chaque run, les artistes déjà traités
+qui étaient à l'ancienne profondeur max ajoutent leurs voisins (relations MusicBrainz, influences
+Wikidata, labels de niche) à partir du cache ; seules les requêtes sur les labels sont nouvelles.
 
 ## Modèle de données
 

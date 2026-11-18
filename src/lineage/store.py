@@ -46,6 +46,9 @@ create table if not exists raw.crawl_queue (
 -- Migration douce des bases existantes : seuil de sorties utilisé lors de l'expansion par labels
 -- de cet artiste (null = labels pas encore explorés).
 alter table raw.crawl_queue add column if not exists label_expansion_limit integer;
+-- Voisins MusicBrainz / Wikidata déjà ajoutés à la file (null = pas encore, ex. artiste traité
+-- à la profondeur max d'un run précédent).
+alter table raw.crawl_queue add column if not exists relations_expanded boolean;
 """
 
 
@@ -119,6 +122,20 @@ class RawStore:
             "update raw.crawl_queue set status=?, error=?, updated_at=? where mbid=?",
             [status, error, _now(), mbid],
         )
+
+    def set_relations_expanded(self, mbid: str) -> None:
+        self.con.execute("update raw.crawl_queue set relations_expanded=true where mbid=?", [mbid])
+
+    def needing_relation_expansion(self, max_depth: int) -> list[tuple[str, str, int]]:
+        """Artistes déjà traités dont les voisins n'ont pas été ajoutés (traités à la profondeur max)."""
+        return self.con.execute(
+            """
+            select mbid, name, depth from raw.crawl_queue
+            where status = 'done' and depth < ? and not coalesce(relations_expanded, false)
+            order by depth, updated_at
+            """,
+            [max_depth],
+        ).fetchall()
 
     def set_label_expansion(self, mbid: str, max_releases: int) -> None:
         self.con.execute("update raw.crawl_queue set label_expansion_limit=? where mbid=?", [max_releases, mbid])

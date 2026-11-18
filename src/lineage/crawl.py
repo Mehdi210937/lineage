@@ -137,13 +137,34 @@ class Crawler:
 
         if depth >= max_depth:
             return 0
+        added = self.expand_relations(mbid, depth, artist, influences)
+        added += self.expand_labels(mbid, depth, artist, releases)
+        return added
+
+    def expand_relations(self, mbid: str, depth: int, artist: dict, influences: dict | None) -> int:
+        """Ajoute à la file les artistes liés par MusicBrainz (membres, alias...) et par Wikidata (P737)."""
         added = 0
         for n_mbid, n_name, rel_type in musicbrainz.related_artists(artist):
             added += self.store.enqueue(n_mbid, n_name, depth + 1, mbid, f"musicbrainz:{rel_type}")
         for n_mbid, n_name, direction in wikidata.related_artists(influences):
             added += self.store.enqueue(n_mbid, n_name, depth + 1, mbid, f"wikidata:{direction}")
-        added += self.expand_labels(mbid, depth, artist, releases)
+        self.store.set_relations_expanded(mbid)
         return added
+
+    # --- rattrapage quand on augmente --depth ---------------------------
+    def catch_up(self, max_depth: int) -> None:
+        """Étend les artistes déjà traités dont les voisins n'ont pas encore été ajoutés à la file :
+        ceux qui étaient à la profondeur max d'un run précédent, ou crawlés avant l'expansion par labels.
+        Les payloads artiste / sorties / influences viennent du cache : aucune requête, sauf pour les labels."""
+        for mbid, name, depth in self.store.needing_relation_expansion(max_depth):
+            artist = self.store.get("musicbrainz", "artist", mbid)
+            if artist is None:
+                continue
+            qid = musicbrainz.external_ids(artist).get("wikidata")
+            influences = self.store.get("wikidata", "influences", qid) if qid else None
+            added = self.expand_relations(mbid, depth, artist, influences)
+            log.info("Relations de %s (profondeur %s) : +%s voisins", name, depth, added)
+        self.catch_up_label_expansion(max_depth)
 
     # --- expansion par labels de niche --------------------------------
     def _label_releases(self, label_mbid: str) -> dict | None:
@@ -190,7 +211,7 @@ class Crawler:
             log.info("Labels de %s (profondeur %s) : +%s voisins", name, depth, added)
 
     def run(self, max_depth: int, max_artists: int) -> None:
-        self.catch_up_label_expansion(max_depth)
+        self.catch_up(max_depth)
         processed = 0
         while processed < max_artists:
             item = self.store.next_pending(max_depth)

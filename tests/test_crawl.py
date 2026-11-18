@@ -39,6 +39,45 @@ def test_crawl_is_cached(tmp_path):
     assert len(api.calls) == first
 
 
+def test_raising_depth_expands_already_crawled_artists(tmp_path):
+    """B a été traité à la profondeur max (1) : relancer avec --depth 2 doit ajouter son voisin D,
+    sans re-télécharger B."""
+    crawler, store, api = make(tmp_path)
+    crawler.resolve_seeds([{"name": "Test Coven", "note": None}])
+    crawler.run(max_depth=1, max_artists=50)
+    assert store.con.execute("select 1 from raw.crawl_queue where mbid=?", [D]).fetchone() is None
+
+    before = len(api.calls)
+    crawler.run(max_depth=2, max_artists=50)
+    row = store.con.execute("select depth, discovered_via, status from raw.crawl_queue where mbid=?", [D]).fetchone()
+    assert row == (2, "musicbrainz:collaboration", "done")
+    assert f"artist:{B}" not in api.calls[before:]  # B vient du cache
+
+
+def test_catch_up_uses_cached_wikidata_influences(tmp_path):
+    """Seed traitée à la profondeur 0 : ses influences Wikidata (C) arrivent au run suivant, depuis le cache."""
+    crawler, store, api = make(tmp_path)
+    crawler.resolve_seeds([{"name": "Test Coven", "note": None}])
+    crawler.run(max_depth=0, max_artists=50)
+
+    before = len(api.calls)
+    crawler.run(max_depth=1, max_artists=50)
+    row = store.con.execute("select depth, discovered_via from raw.crawl_queue where mbid=?", [C]).fetchone()
+    assert row == (1, "wikidata:influenced_by")
+    new_calls = api.calls[before:]
+    assert f"artist:{A}" not in new_calls and not any(c.startswith("wikidata:") for c in new_calls)
+
+
+def test_catch_up_is_idempotent(tmp_path):
+    crawler, store, api = make(tmp_path)
+    crawler.resolve_seeds([{"name": "Test Coven", "note": None}])
+    crawler.run(max_depth=2, max_artists=50)
+    n_queue, n_calls = store.count(), len(api.calls)
+    crawler.run(max_depth=2, max_artists=50)  # rien à rattraper, rien à traiter
+    assert (store.count(), len(api.calls)) == (n_queue, n_calls)
+    assert store.needing_relation_expansion(2) == []
+
+
 def test_unknown_seed_is_recorded(tmp_path):
     crawler, store, _ = make(tmp_path)
     crawler.resolve_seeds([{"name": "Does Not Exist", "note": None}])
