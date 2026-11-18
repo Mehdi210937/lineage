@@ -1,5 +1,6 @@
 -- Quels artistes sortent sur quels labels, et quand.
 -- Combine les sorties (label-info) et les relations explicites (contrat, etc.).
+-- Les faux labels ([no label]) sont exclus : l'autoproduction est portée par fct_artist_releases.is_self_released.
 with from_releases as (
     select
         artist_mbid,
@@ -10,6 +11,7 @@ with from_releases as (
         max(release_year)              as last_release_year
     from {{ ref('stg_musicbrainz__release_labels') }}
     where label_mbid is not null
+      and not is_placeholder_label
     group by 1, 2
 ),
 
@@ -21,6 +23,7 @@ from_relations as (
         string_agg(distinct relation_type, ', ') as relation_types
     from {{ ref('stg_musicbrainz__relations') }}
     where target_type = 'label'
+      and target_id not in {{ mb_placeholder_labels() }}
     group by 1, 2
 )
 

@@ -1,4 +1,6 @@
 -- Une ligne par couple (sortie, label). Les sorties sans label gardent label_mbid = null.
+-- is_placeholder_label signale les faux labels de MusicBrainz comme [no label] (autoproduction) :
+-- on les garde ici pour calculer is_self_released, et on les exclut des marts de labels.
 with source as (
     select entity_id as artist_mbid, payload
     from {{ source('raw', 'api_responses') }}
@@ -31,6 +33,7 @@ select
     release_year,
     li ->> '$.label.id'        as label_mbid,
     li ->> '$.label.name'      as label_name,
-    li ->> '$.catalog-number'  as catalog_number
+    li ->> '$.catalog-number'  as catalog_number,
+    coalesce(li ->> '$.label.id' in {{ mb_placeholder_labels() }}, false) as is_placeholder_label
 from with_labels
 left join lateral (select unnest(label_infos) as li) on true

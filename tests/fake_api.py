@@ -9,6 +9,7 @@ B = "00000000-0000-0000-0000-00000000000b"  # Ghost Ritual (membre)
 C = "00000000-0000-0000-0000-00000000000c"  # Old Drone Master (influence Wikidata)
 D = "00000000-0000-0000-0000-00000000000d"  # Far Away Band (profondeur 2)
 LABEL = "11111111-1111-1111-1111-111111111111"
+NO_LABEL = "157afde4-4bf5-4039-8ad2-5a15acc85176"  # vrai MBID de [no label] dans MusicBrainz
 
 
 def _rel_artist(rel_type, mbid, name, direction="forward"):
@@ -65,10 +66,12 @@ class FakeApi:
         self.calls.append(f"releases:{mbid}")
         if mbid != A:
             return {"artist_mbid": mbid, "release-count": 0, "releases": []}
-        return {"artist_mbid": mbid, "release-count": 2, "releases": [
+        return {"artist_mbid": mbid, "release-count": 3, "releases": [
             {"id": "r1", "title": "Hex EP", "date": "2010-03-01", "status": "Official",
              "label-info": [{"catalog-number": "CRYPT001", "label": {"id": LABEL, "name": "Crypt Records"}}]},
-            {"id": "r2", "title": "Self Release", "date": "2011", "status": "Official", "label-info": []},
+            {"id": "r2", "title": "Self Release", "date": "2011", "status": "Official",
+             "label-info": [{"catalog-number": None, "label": {"id": NO_LABEL, "name": "[no label]"}}]},
+            {"id": "r3", "title": "Unknown Tape", "date": "2012", "status": "Official", "label-info": []},
         ]}
 
     def discogs_artist(self, discogs_id):

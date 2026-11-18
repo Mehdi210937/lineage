@@ -48,3 +48,18 @@ models:
     columns:
       - name: label_mbid
         data_tests: [unique, not_null]
+
+  - name: fct_artist_releases
+    description: >
+      Une ligne par (artiste, sortie). is_self_released vaut true si MusicBrainz indique explicitement
+      [no label] sans vrai label, false s'il y a au moins un vrai label, null si aucune info de label.
+    columns:
+      - name: artist_mbid
+        data_tests: [not_null]
+      - name: release_mbid
+        data_tests: [not_null]
+      - name: n_labels
+        description: Nombre de vrais labels (hors [no label]).
+        data_tests: [not_null]
+      - name: is_self_released
+        description: Autoproduction explicite ; null = inconnu.

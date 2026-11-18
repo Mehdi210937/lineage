@@ -18,3 +18,8 @@ models:
     marts:
       +materialized: table
       +schema: marts
+
+vars:
+  # Labels « spéciaux » de MusicBrainz qui ne sont pas de vrais labels.
+  # [no label] = sortie autoproduite (https://musicbrainz.org/label/157afde4-4bf5-4039-8ad2-5a15acc85176).
+  mb_placeholder_label_mbids: ["157afde4-4bf5-4039-8ad2-5a15acc85176"]
