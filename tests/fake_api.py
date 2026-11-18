@@ -8,7 +8,11 @@ A = "00000000-0000-0000-0000-00000000000a"  # Test Coven (seed)
 B = "00000000-0000-0000-0000-00000000000b"  # Ghost Ritual (membre)
 C = "00000000-0000-0000-0000-00000000000c"  # Old Drone Master (influence Wikidata)
 D = "00000000-0000-0000-0000-00000000000d"  # Far Away Band (profondeur 2)
-LABEL = "11111111-1111-1111-1111-111111111111"
+E = "00000000-0000-0000-0000-00000000000e"  # Crypt Sister (même label de niche que A)
+F = "00000000-0000-0000-0000-00000000000f"  # Pop Star (seulement sur le gros label)
+LABEL = "11111111-1111-1111-1111-111111111111"      # Crypt Records : label de niche (3 sorties)
+BIG_LABEL = "22222222-2222-2222-2222-222222222222"  # Mega Major : 5000 sorties, à ne pas explorer
+VARIOUS = "89ad4ac3-39f7-470e-963a-56509c546377"    # vrai MBID de « Various Artists »
 NO_LABEL = "157afde4-4bf5-4039-8ad2-5a15acc85176"  # vrai MBID de [no label] dans MusicBrainz
 
 
@@ -44,6 +48,31 @@ ARTISTS = {
         "genres": [{"name": "drone", "count": 3}], "tags": [], "relations": []},
     D: {"id": D, "name": "Far Away Band", "sort-name": "Far Away Band", "type": "Group",
         "country": "FR", "life-span": {}, "genres": [], "tags": [], "relations": []},
+    E: {"id": E, "name": "Crypt Sister", "sort-name": "Crypt Sister", "type": "Person", "country": "US",
+        "life-span": {"begin": "1991", "end": None, "ended": False},
+        "genres": [{"name": "witch house", "count": 2}], "tags": [], "relations": []},
+}
+
+
+def _credit(mbid, name):
+    return [{"name": name, "joinphrase": "", "artist": {"id": mbid, "name": name}}]
+
+
+def _label_info(label_mbid, name, catno=None):
+    return [{"catalog-number": catno, "label": {"id": label_mbid, "name": name}}]
+
+
+# Sorties des labels, au format de /ws/2/release?label=...&inc=artist-credits
+LABEL_RELEASES = {
+    LABEL: {"release-count": 3, "releases": [
+        {"id": "r1", "title": "Hex EP", "artist-credit": _credit(A, "Test Coven")},
+        {"id": "r5", "title": "Crypt Sister LP", "artist-credit": _credit(E, "Crypt Sister")},
+        {"id": "r6", "title": "Crypt Sampler", "artist-credit": _credit(VARIOUS, "Various Artists")},
+    ]},
+    BIG_LABEL: {"release-count": 5000, "releases": [
+        {"id": "r4", "title": "Big Single", "artist-credit": _credit(A, "Test Coven")},
+        {"id": "r7", "title": "Chart Hit", "artist-credit": _credit(F, "Pop Star")},
+    ]},
 }
 
 
@@ -64,15 +93,30 @@ class FakeApi:
 
     def mb_releases(self, mbid):
         self.calls.append(f"releases:{mbid}")
+        if mbid == E:
+            return {"artist_mbid": mbid, "release-count": 1, "releases": [
+                {"id": "r5", "title": "Crypt Sister LP", "date": "2012", "status": "Official",
+                 "label-info": _label_info(LABEL, "Crypt Records", "CRYPT002")},
+            ]}
         if mbid != A:
             return {"artist_mbid": mbid, "release-count": 0, "releases": []}
-        return {"artist_mbid": mbid, "release-count": 3, "releases": [
+        return {"artist_mbid": mbid, "release-count": 4, "releases": [
             {"id": "r1", "title": "Hex EP", "date": "2010-03-01", "status": "Official",
              "label-info": [{"catalog-number": "CRYPT001", "label": {"id": LABEL, "name": "Crypt Records"}}]},
             {"id": "r2", "title": "Self Release", "date": "2011", "status": "Official",
              "label-info": [{"catalog-number": None, "label": {"id": NO_LABEL, "name": "[no label]"}}]},
             {"id": "r3", "title": "Unknown Tape", "date": "2012", "status": "Official", "label-info": []},
+            {"id": "r4", "title": "Big Single", "date": "2013", "status": "Official",
+             "label-info": _label_info(BIG_LABEL, "Mega Major", "MM-1")},
         ]}
+
+    def mb_label_releases(self, label_mbid, max_releases):
+        """Imite musicbrainz.browse_label_releases : payload tronqué si le label dépasse le seuil."""
+        self.calls.append(f"label:{label_mbid}")
+        data = LABEL_RELEASES.get(label_mbid, {"release-count": 0, "releases": []})
+        complete = data["release-count"] <= max_releases
+        return {"label_mbid": label_mbid, "release-count": data["release-count"], "complete": complete,
+                "releases": data["releases"] if complete else []}
 
     def discogs_artist(self, discogs_id):
         self.calls.append(f"discogs:{discogs_id}")

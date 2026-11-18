@@ -42,6 +42,10 @@ create table if not exists raw.crawl_queue (
     error           varchar,
     updated_at      timestamp not null
 );
+
+-- Migration douce des bases existantes : seuil de sorties utilisé lors de l'expansion par labels
+-- de cet artiste (null = labels pas encore explorés).
+alter table raw.crawl_queue add column if not exists label_expansion_limit integer;
 """
 
 
@@ -92,7 +96,10 @@ class RawStore:
         if exists:
             return False
         self.con.execute(
-            "insert into raw.crawl_queue values (?, ?, ?, ?, ?, 'pending', null, ?)",
+            """
+            insert into raw.crawl_queue (mbid, name, depth, discovered_from, discovered_via, status, error, updated_at)
+            values (?, ?, ?, ?, ?, 'pending', null, ?)
+            """,
             [mbid, name, depth, discovered_from, via, _now()],
         )
         return True
@@ -112,6 +119,21 @@ class RawStore:
             "update raw.crawl_queue set status=?, error=?, updated_at=? where mbid=?",
             [status, error, _now(), mbid],
         )
+
+    def set_label_expansion(self, mbid: str, max_releases: int) -> None:
+        self.con.execute("update raw.crawl_queue set label_expansion_limit=? where mbid=?", [max_releases, mbid])
+
+    def needing_label_expansion(self, max_depth: int, max_releases: int) -> list[tuple[str, str, int]]:
+        """Artistes déjà traités dont les labels n'ont pas été explorés (ou avec un seuil plus bas)."""
+        return self.con.execute(
+            """
+            select mbid, name, depth from raw.crawl_queue
+            where status = 'done' and depth < ?
+              and (label_expansion_limit is null or label_expansion_limit < ?)
+            order by depth, updated_at
+            """,
+            [max_depth, max_releases],
+        ).fetchall()
 
     def count(self, status: str | None = None) -> int:
         if status:

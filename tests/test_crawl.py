@@ -1,4 +1,4 @@
-from fake_api import A, B, C, D, FakeApi
+from fake_api import A, B, C, D, E, FakeApi
 
 from lineage.crawl import Crawler
 from lineage.sources import musicbrainz
@@ -21,8 +21,9 @@ def test_crawl_respects_depth(tmp_path):
     crawler.resolve_seeds([{"name": "Test Coven", "note": "test"}])
     crawler.run(max_depth=1, max_artists=50)
     done = {r[0] for r in store.con.execute("select mbid from raw.crawl_queue where status='done'").fetchall()}
-    # A (seed) + B (membre) + C (influence Wikidata) ; D est à profondeur 2 donc non traité
-    assert done == {A, B, C}
+    # A (seed) + B (membre) + C (influence Wikidata) + E (même label de niche) ;
+    # D est à profondeur 2 donc non traité
+    assert done == {A, B, C, E}
     depth_d = store.con.execute("select depth, status from raw.crawl_queue where mbid=?", [D]).fetchone()
     assert depth_d is None  # B est à profondeur max, on n'ajoute pas ses voisins
 

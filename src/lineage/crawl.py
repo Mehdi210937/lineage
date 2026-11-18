@@ -1,7 +1,10 @@
 """Crawl en largeur du graphe d'artistes à partir des artistes de départ.
 
 Usage :
-    python -m lineage.crawl --depth 2 --max-artists 400
+    python -m lineage.crawl --depth 2 --max-artists 400 [--label-max-releases 300]
+
+Voisins d'un artiste : ses relations MusicBrainz (membres, alias...), ses influences Wikidata, et les
+autres artistes de ses labels de niche (labels ayant au plus --label-max-releases sorties ; 0 = désactivé).
 
 Le crawl est reprenable : la file est stockée dans DuckDB (raw.crawl_queue).
 Si tu l'interromps (Ctrl+C), relance la même commande, il reprend où il en était.
@@ -27,6 +30,7 @@ class Api(Protocol):
     def mb_search(self, name: str) -> dict | None: ...
     def mb_artist(self, mbid: str) -> dict | None: ...
     def mb_releases(self, mbid: str) -> dict: ...
+    def mb_label_releases(self, label_mbid: str, max_releases: int) -> dict: ...
     def discogs_artist(self, discogs_id: str) -> dict | None: ...
     def discogs_releases(self, discogs_id: str) -> dict: ...
     def wikidata_influences(self, qid: str) -> dict | None: ...
@@ -54,6 +58,9 @@ class LiveApi:
     def mb_releases(self, mbid):
         return musicbrainz.browse_releases(self.client, mbid)
 
+    def mb_label_releases(self, label_mbid, max_releases):
+        return musicbrainz.browse_label_releases(self.client, label_mbid, max_releases)
+
     def discogs_artist(self, discogs_id):
         return discogs.get_artist(self.client, discogs_id, self.token)
 
@@ -64,16 +71,33 @@ class LiveApi:
         return wikidata.get_influences(self.client, qid)
 
 
+DEFAULT_LABEL_MAX_RELEASES = 300
+
+
 class Crawler:
-    def __init__(self, api: Api, store: RawStore, refresh_days: int = 30):
+    def __init__(
+        self,
+        api: Api,
+        store: RawStore,
+        refresh_days: int = 30,
+        label_max_releases: int = DEFAULT_LABEL_MAX_RELEASES,
+    ):
         self.api = api
         self.store = store
         self.refresh_days = refresh_days
+        # Au-delà de ce nombre de sorties, un label est trop gros pour définir une scène
+        # (Polydor, Fiction, [PIAS]...) : on n'enrôle pas ses artistes. 0 = expansion désactivée.
+        self.label_max_releases = label_max_releases
 
-    def _cached(self, source: str, entity_type: str, entity_id: str, fetch):
-        """Renvoie le payload en cache s'il est frais, sinon appelle l'API et le stocke."""
+    def _cached(self, source: str, entity_type: str, entity_id: str, fetch, reuse=None):
+        """Renvoie le payload en cache s'il est frais, sinon appelle l'API et le stocke.
+
+        `reuse(payload)` peut refuser un payload en cache encore frais mais insuffisant.
+        """
         if self.store.is_fresh(source, entity_type, entity_id, self.refresh_days):
-            return self.store.get(source, entity_type, entity_id)
+            payload = self.store.get(source, entity_type, entity_id)
+            if reuse is None or reuse(payload):
+                return payload
         payload = fetch()
         self.store.put(source, entity_type, entity_id, payload)
         return payload
@@ -100,7 +124,7 @@ class Crawler:
         artist = self._cached("musicbrainz", "artist", mbid, lambda: self.api.mb_artist(mbid))
         if artist is None:
             raise LookupError(f"artiste MusicBrainz introuvable : {mbid}")
-        self._cached("musicbrainz", "artist_releases", mbid, lambda: self.api.mb_releases(mbid))
+        releases = self._cached("musicbrainz", "artist_releases", mbid, lambda: self.api.mb_releases(mbid))
 
         ids = musicbrainz.external_ids(artist)
         if (d_id := ids.get("discogs")) and self.api.has_discogs:
@@ -118,9 +142,55 @@ class Crawler:
             added += self.store.enqueue(n_mbid, n_name, depth + 1, mbid, f"musicbrainz:{rel_type}")
         for n_mbid, n_name, direction in wikidata.related_artists(influences):
             added += self.store.enqueue(n_mbid, n_name, depth + 1, mbid, f"wikidata:{direction}")
+        added += self.expand_labels(mbid, depth, artist, releases)
         return added
 
+    # --- expansion par labels de niche --------------------------------
+    def _label_releases(self, label_mbid: str) -> dict | None:
+        limit = self.label_max_releases
+
+        def still_valid(payload: dict | None) -> bool:
+            # Un payload tronqué (label jugé trop gros) n'est réutilisable que si le label
+            # dépasse encore le seuil actuel ; sinon il faut le re-télécharger en entier.
+            return payload is None or payload.get("complete", True) or payload.get("release-count", 0) > limit
+
+        return self._cached(
+            "musicbrainz", "label_releases", label_mbid,
+            lambda: self.api.mb_label_releases(label_mbid, limit), reuse=still_valid,
+        )
+
+    def expand_labels(self, mbid: str, depth: int, artist: dict | None, releases: dict | None) -> int:
+        """Ajoute à la file les autres artistes des labels de niche de cet artiste."""
+        if self.label_max_releases <= 0:
+            return 0
+        added = 0
+        for label_mbid, label_name in musicbrainz.artist_labels(artist, releases).items():
+            payload = self._label_releases(label_mbid)
+            if not payload:
+                continue
+            n_releases = payload.get("release-count", 0)
+            if n_releases > self.label_max_releases:
+                log.info("Label « %s » ignoré : %s sorties (> %s)", label_name, n_releases, self.label_max_releases)
+                continue
+            for n_mbid, n_name in musicbrainz.label_artists(payload):
+                if n_mbid != mbid:
+                    added += self.store.enqueue(n_mbid, n_name, depth + 1, mbid, f"musicbrainz:label:{label_name}")
+        self.store.set_label_expansion(mbid, self.label_max_releases)
+        return added
+
+    def catch_up_label_expansion(self, max_depth: int) -> None:
+        """Explore les labels des artistes traités avant l'existence de l'expansion (ou avec un seuil
+        plus bas). Les payloads artiste et sorties viennent du cache : seuls les labels sont demandés."""
+        if self.label_max_releases <= 0:
+            return
+        for mbid, name, depth in self.store.needing_label_expansion(max_depth, self.label_max_releases):
+            artist = self.store.get("musicbrainz", "artist", mbid)
+            releases = self.store.get("musicbrainz", "artist_releases", mbid)
+            added = self.expand_labels(mbid, depth, artist, releases)
+            log.info("Labels de %s (profondeur %s) : +%s voisins", name, depth, added)
+
     def run(self, max_depth: int, max_artists: int) -> None:
+        self.catch_up_label_expansion(max_depth)
         processed = 0
         while processed < max_artists:
             item = self.store.next_pending(max_depth)
@@ -151,6 +221,10 @@ def main() -> None:
     parser.add_argument("--seeds", default="seeds/seed_artists.csv")
     parser.add_argument("--depth", type=int, default=2, help="distance max depuis les artistes de départ")
     parser.add_argument("--max-artists", type=int, default=400, help="nombre max d'artistes traités par run")
+    parser.add_argument(
+        "--label-max-releases", type=int, default=DEFAULT_LABEL_MAX_RELEASES,
+        help="n'explore que les labels ayant au plus N sorties (0 = pas d'expansion par labels)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -161,7 +235,7 @@ def main() -> None:
     store = RawStore(settings.duckdb_path)
     api = LiveApi(settings)
     try:
-        crawler = Crawler(api, store, settings.refresh_days)
+        crawler = Crawler(api, store, settings.refresh_days, label_max_releases=args.label_max_releases)
         crawler.resolve_seeds(read_seeds(Path(args.seeds)))
         crawler.run(args.depth, args.max_artists)
     finally:
