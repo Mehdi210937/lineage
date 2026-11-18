@@ -1,0 +1,50 @@
+version: 2
+
+models:
+  - name: dim_artists
+    description: Un artiste par ligne avec identifiants externes, bio Discogs et position dans le crawl.
+    columns:
+      - name: artist_mbid
+        data_tests: [unique, not_null]
+      - name: crawl_depth
+        description: Distance (en sauts) depuis l'artiste de départ le plus proche.
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: discogs_artist_id
+        data_tests:
+          - unique:
+              config:
+                severity: warn  # deux MBID vers un même Discogs = doublon probable à corriger
+
+  - name: edges_artists
+    description: >
+      Arêtes du graphe artiste → artiste. Chaque arête porte sa source (musicbrainz, wikidata,
+      plus tard llm) pour qu'on sache toujours d'où vient une affirmation.
+    columns:
+      - name: from_artist_mbid
+        data_tests: [not_null]
+      - name: to_artist_mbid
+        data_tests: [not_null]
+      - name: edge_type
+        data_tests: [not_null]
+      - name: source_system
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["musicbrainz", "wikidata", "llm"]
+
+  - name: bridge_artist_labels
+    description: Artistes × labels, avec nombre de sorties et période d'activité.
+    columns:
+      - name: artist_mbid
+        data_tests: [not_null]
+      - name: label_mbid
+        data_tests: [not_null]
+
+  - name: dim_labels
+    description: Un label par ligne avec son activité dans le périmètre crawlé.
+    columns:
+      - name: label_mbid
+        data_tests: [unique, not_null]

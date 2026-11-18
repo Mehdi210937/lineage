@@ -1,0 +1,45 @@
+version: 2
+
+models:
+  - name: stg_musicbrainz__artists
+    description: Un artiste MusicBrainz par ligne.
+    columns:
+      - name: artist_mbid
+        data_tests: [unique, not_null]
+      - name: artist_name
+        data_tests: [not_null]
+
+  - name: stg_musicbrainz__relations
+    description: Relations d'un artiste vers d'autres artistes, des labels ou des URL.
+    columns:
+      - name: artist_mbid
+        data_tests: [not_null]
+      - name: target_type
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["artist", "label", "url", "event", "place", "series", "work", "recording", "release", "release_group", "area", "instrument", "genre"]
+              config:
+                severity: warn
+
+  - name: stg_musicbrainz__release_labels
+    description: Une ligne par couple (sortie, label) ; label_mbid nul pour les sorties sans label.
+    columns:
+      - name: release_mbid
+        data_tests: [not_null]
+
+  - name: stg_discogs__artists
+    description: Fiches artistes Discogs, dont la bio libre (profile).
+    columns:
+      - name: discogs_artist_id
+        data_tests: [unique, not_null]
+
+  - name: stg_wikidata__influences
+    description: Relations P737 (influencé par) dans les deux sens.
+    columns:
+      - name: direction
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["influenced_by", "influenced"]

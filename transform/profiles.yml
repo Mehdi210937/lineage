@@ -1,0 +1,15 @@
+lineage:
+  target: dev
+  outputs:
+    # Base réelle remplie par le crawler
+    dev:
+      type: duckdb
+      path: "{{ env_var('LINEAGE_DUCKDB_PATH', '../data/lineage.duckdb') }}"
+      threads: 4
+      settings:
+        memory_limit: "6GB"   # laisse de la RAM au LLM local
+    # Base de démo avec des artistes fictifs (tests/make_demo_db.py)
+    demo:
+      type: duckdb
+      path: "../data/demo.duckdb"
+      threads: 4
