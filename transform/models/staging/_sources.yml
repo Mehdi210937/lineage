@@ -17,3 +17,7 @@ sources:
         description: Artistes de départ choisis à la main et leur résolution en MBID.
       - name: crawl_queue
         description: File du crawl, avec la profondeur de chaque artiste depuis les artistes de départ.
+      - name: llm_influence_claims
+        description: >
+          Relations extraites des bios Discogs par le LLM local (src/lineage/extract/run.py), avec la
+          citation mot pour mot qui les justifie. Peut ne pas exister tant que l'extraction n'a pas tourné.

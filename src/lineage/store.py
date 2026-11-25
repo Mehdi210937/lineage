@@ -49,6 +49,18 @@ alter table raw.crawl_queue add column if not exists label_expansion_limit integ
 -- Voisins MusicBrainz / Wikidata déjà ajoutés à la file (null = pas encore, ex. artiste traité
 -- à la profondeur max d'un run précédent).
 alter table raw.crawl_queue add column if not exists relations_expanded boolean;
+
+-- Relations extraites des bios par le LLM (src/lineage/extract/run.py). Une ligne sans other_artist
+-- marque un artiste traité sans relation trouvée.
+create table if not exists raw.llm_influence_claims (
+    artist_mbid    varchar,
+    model          varchar,
+    other_artist   varchar,
+    relation       varchar,
+    evidence_quote varchar,
+    confidence     double,
+    extracted_at   timestamp
+);
 """
 
 

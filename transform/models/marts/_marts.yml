@@ -20,8 +20,9 @@ models:
 
   - name: edges_artists
     description: >
-      Arêtes du graphe artiste → artiste. Chaque arête porte sa source (musicbrainz, wikidata,
-      plus tard llm) pour qu'on sache toujours d'où vient une affirmation.
+      Arêtes du graphe artiste → artiste. Chaque arête porte sa source (musicbrainz, wikidata, llm)
+      pour qu'on sache toujours d'où vient une affirmation. Les arêtes llm citent la phrase de la bio
+      qui les justifie (evidence) et portent la confiance donnée par le LLM.
     columns:
       - name: from_artist_mbid
         data_tests: [not_null]
@@ -34,6 +35,8 @@ models:
           - accepted_values:
               arguments:
                 values: ["musicbrainz", "wikidata", "llm"]
+      - name: confidence
+        description: Confiance du LLM entre 0 et 1 (null pour les sources non LLM).
 
   - name: bridge_artist_labels
     description: Artistes × labels, avec nombre de sorties et période d'activité.
@@ -63,3 +66,16 @@ models:
         data_tests: [not_null]
       - name: is_self_released
         description: Autoproduction explicite ; null = inconnu.
+
+  - name: llm_claims_to_review
+    description: >
+      Affirmations du LLM dont l'autre artiste n'a pas été rapproché d'un MBID unique : no_match (nom
+      inconnu du crawl) ou ambiguous (homonymes, voir candidate_mbids). À revoir à la main.
+    columns:
+      - name: artist_mbid
+        data_tests: [not_null]
+      - name: match_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["no_match", "ambiguous"]

@@ -1,0 +1,47 @@
+version: 2
+
+models:
+  - name: int_llm_claims__resolved
+    description: >
+      Affirmations du LLM avec l'autre artiste rapproché d'un MBID par nom normalisé
+      (match_status = matched | ambiguous | no_match).
+    columns:
+      - name: match_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["matched", "ambiguous", "no_match"]
+
+unit_tests:
+  - name: llm_name_resolution
+    description: >
+      Normalisation (casse, accents, ponctuation, « the »), priorité aux artistes crawlés sur les
+      simples cibles de relations, homonymes laissés en revue, noms inconnus non rapprochés.
+    model: int_llm_claims__resolved
+    given:
+      - input: ref('stg_llm__influence_claims')
+        rows:
+          - {artist_mbid: a, other_artist: "crypt sister", other_artist_key: "crypt sister", relation: compared_to}
+          - {artist_mbid: a, other_artist: "Ghost", other_artist_key: "ghost", relation: influenced_by}
+          - {artist_mbid: a, other_artist: "Outsider", other_artist_key: "outsider", relation: influenced_by}
+          - {artist_mbid: a, other_artist: "Old Drone Master", other_artist_key: "old drone master", relation: influenced_by}
+          - {artist_mbid: a, other_artist: "Nobody Knows", other_artist_key: "nobody knows", relation: sampled}
+      - input: ref('stg_musicbrainz__artists')
+        rows:
+          - {artist_mbid: a, artist_name: "Test Coven"}
+          - {artist_mbid: e, artist_name: "The Crÿpt-Sister"}
+          - {artist_mbid: g1, artist_name: "GHOST"}
+          - {artist_mbid: g2, artist_name: "Ghost"}
+          - {artist_mbid: c, artist_name: "Old Drone Master"}
+      - input: ref('stg_musicbrainz__relations')
+        rows:
+          - {artist_mbid: a, target_type: artist, target_id: o, target_name: "Outsider"}
+          - {artist_mbid: a, target_type: artist, target_id: c_old, target_name: "Old Drone Master"}
+          - {artist_mbid: a, target_type: url, target_id: null, target_name: null}
+    expect:
+      rows:
+        - {other_artist: "crypt sister", other_artist_mbid: e, match_status: matched, n_candidates: 1}
+        - {other_artist: "Ghost", other_artist_mbid: null, match_status: ambiguous, n_candidates: 2}
+        - {other_artist: "Outsider", other_artist_mbid: o, match_status: matched, n_candidates: 1}
+        - {other_artist: "Old Drone Master", other_artist_mbid: c, match_status: matched, n_candidates: 1}
+        - {other_artist: "Nobody Knows", other_artist_mbid: null, match_status: no_match, n_candidates: 0}

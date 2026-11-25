@@ -16,6 +16,31 @@ VARIOUS = "89ad4ac3-39f7-470e-963a-56509c546377"    # vrai MBID de « Various Ar
 NO_LABEL = "157afde4-4bf5-4039-8ad2-5a15acc85176"  # vrai MBID de [no label] dans MusicBrainz
 
 
+# Bio Discogs fictive de Test Coven, et ce qu'un LLM pourrait en extraire (base de démo).
+TEST_COVEN_BIO = (
+    "Duo formé en 2008, très influencé par Old Drone Master et la scène chopped and screwed. "
+    "Leur premier EP a été enregistré avec Ghost Ritual. "
+    "Souvent comparé à Crypt Sister pour ses voix noyées d'écho. "
+    "Leur son a profondément marqué Far Away Band. "
+    "Le titre Hex sample un vieux disque de Lady Midnight."
+)
+
+# (artiste, autre artiste tel qu'écrit par le LLM, relation, citation, confiance)
+DEMO_LLM_CLAIMS = [
+    (A, "Old Drone Master", "influenced_by",
+     "très influencé par Old Drone Master et la scène chopped and screwed", 0.95),
+    (A, "ghost ritual", "collaborated_with", "Leur premier EP a été enregistré avec Ghost Ritual.", 0.8),
+    (A, "The Crypt-Sister", "compared_to", "Souvent comparé à Crypt Sister pour ses voix noyées d'écho.", 0.7),
+    (A, "Far Away Band", "influenced", "Leur son a profondément marqué Far Away Band.", 0.6),
+    # non rapprochés : artiste hors du crawl, et genre pris pour un artiste
+    (A, "Lady Midnight", "sampled", "Le titre Hex sample un vieux disque de Lady Midnight.", 0.85),
+    (A, "chopped and screwed", "influenced_by",
+     "très influencé par Old Drone Master et la scène chopped and screwed", 0.3),
+    # artiste traité, aucune relation trouvée
+    (B, None, None, None, None),
+]
+
+
 def _rel_artist(rel_type, mbid, name, direction="forward"):
     return {"type": rel_type, "direction": direction, "target-type": "artist",
             "begin": "2009", "end": None, "attributes": [],
@@ -121,7 +146,7 @@ class FakeApi:
     def discogs_artist(self, discogs_id):
         self.calls.append(f"discogs:{discogs_id}")
         return {"id": int(discogs_id), "name": "Test Coven",
-                "profile": "Duo formé en 2008, très influencé par Old Drone Master et la scène chopped and screwed.",
+                "profile": TEST_COVEN_BIO,
                 "data_quality": "Needs Vote"}
 
     def discogs_releases(self, discogs_id):

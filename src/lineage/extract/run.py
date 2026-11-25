@@ -17,20 +17,9 @@ import httpx
 
 from lineage.config import get_settings
 from lineage.extract.schema import SYSTEM_PROMPT, ExtractionResult, validate_against_source
+from lineage.store import SCHEMA_SQL
 
 log = logging.getLogger("lineage.extract")
-
-DDL = """
-create table if not exists raw.llm_influence_claims (
-    artist_mbid    varchar,
-    model          varchar,
-    other_artist   varchar,
-    relation       varchar,
-    evidence_quote varchar,
-    confidence     double,
-    extracted_at   timestamp
-);
-"""
 
 
 def extract(client: httpx.Client, url: str, model: str, artist_name: str, profile: str) -> ExtractionResult:
@@ -61,7 +50,7 @@ def main() -> None:
 
     s = get_settings()
     con = duckdb.connect(str(s.duckdb_path))
-    con.execute(DDL)
+    con.execute(SCHEMA_SQL)
     todo = con.execute(
         """
         select a.artist_mbid, a.artist_name, a.discogs_profile
