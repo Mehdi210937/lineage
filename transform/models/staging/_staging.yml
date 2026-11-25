@@ -29,6 +29,12 @@ models:
       - name: release_mbid
         data_tests: [not_null]
 
+  - name: stg_musicbrainz__labels
+    description: Un label exploré par le crawler, avec son nombre total de sorties dans MusicBrainz.
+    columns:
+      - name: label_mbid
+        data_tests: [unique, not_null]
+
   - name: stg_discogs__artists
     description: Fiches artistes Discogs, dont la bio libre (profile).
     columns:

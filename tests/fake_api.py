@@ -10,8 +10,10 @@ C = "00000000-0000-0000-0000-00000000000c"  # Old Drone Master (influence Wikida
 D = "00000000-0000-0000-0000-00000000000d"  # Far Away Band (profondeur 2)
 E = "00000000-0000-0000-0000-00000000000e"  # Crypt Sister (même label de niche que A)
 F = "00000000-0000-0000-0000-00000000000f"  # Pop Star (seulement sur le gros label)
+G = "00000000-0000-0000-0000-000000000010"  # Veil Choir (label de niche de E, profondeur 2)
 LABEL = "11111111-1111-1111-1111-111111111111"      # Crypt Records : label de niche (3 sorties)
 BIG_LABEL = "22222222-2222-2222-2222-222222222222"  # Mega Major : 5000 sorties, à ne pas explorer
+HOLLOW = "33333333-3333-3333-3333-333333333333"     # Hollow Tapes : label de niche récent de E
 VARIOUS = "89ad4ac3-39f7-470e-963a-56509c546377"    # vrai MBID de « Various Artists »
 NO_LABEL = "157afde4-4bf5-4039-8ad2-5a15acc85176"  # vrai MBID de [no label] dans MusicBrainz
 
@@ -76,6 +78,9 @@ ARTISTS = {
     E: {"id": E, "name": "Crypt Sister", "sort-name": "Crypt Sister", "type": "Person", "country": "US",
         "life-span": {"begin": "1991", "end": None, "ended": False},
         "genres": [{"name": "witch house", "count": 2}], "tags": [], "relations": []},
+    G: {"id": G, "name": "Veil Choir", "sort-name": "Veil Choir", "type": "Group", "country": "DE",
+        "life-span": {"begin": "2022", "end": None, "ended": False},
+        "genres": [{"name": "darkwave", "count": 1}], "tags": [], "relations": []},
 }
 
 
@@ -93,6 +98,11 @@ LABEL_RELEASES = {
         {"id": "r1", "title": "Hex EP", "artist-credit": _credit(A, "Test Coven")},
         {"id": "r5", "title": "Crypt Sister LP", "artist-credit": _credit(E, "Crypt Sister")},
         {"id": "r6", "title": "Crypt Sampler", "artist-credit": _credit(VARIOUS, "Various Artists")},
+    ]},
+    HOLLOW: {"release-count": 3, "releases": [
+        {"id": "r8", "title": "Drowned Hymns", "artist-credit": _credit(E, "Crypt Sister")},
+        {"id": "r9", "title": "Static Bloom", "artist-credit": _credit(D, "Far Away Band")},
+        {"id": "r10", "title": "Veil Choir I", "artist-credit": _credit(G, "Veil Choir")},
     ]},
     BIG_LABEL: {"release-count": 5000, "releases": [
         {"id": "r4", "title": "Big Single", "artist-credit": _credit(A, "Test Coven")},
@@ -119,9 +129,21 @@ class FakeApi:
     def mb_releases(self, mbid):
         self.calls.append(f"releases:{mbid}")
         if mbid == E:
-            return {"artist_mbid": mbid, "release-count": 1, "releases": [
+            return {"artist_mbid": mbid, "release-count": 2, "releases": [
                 {"id": "r5", "title": "Crypt Sister LP", "date": "2012", "status": "Official",
                  "label-info": _label_info(LABEL, "Crypt Records", "CRYPT002")},
+                {"id": "r8", "title": "Drowned Hymns", "date": "2025-10", "status": "Official",
+                 "label-info": _label_info(HOLLOW, "Hollow Tapes", "HT-01")},
+            ]}
+        if mbid == D:
+            return {"artist_mbid": mbid, "release-count": 1, "releases": [
+                {"id": "r9", "title": "Static Bloom", "date": "2026", "status": "Official",
+                 "label-info": _label_info(HOLLOW, "Hollow Tapes", "HT-02")},
+            ]}
+        if mbid == G:
+            return {"artist_mbid": mbid, "release-count": 1, "releases": [
+                {"id": "r10", "title": "Veil Choir I", "date": "2026", "status": "Official",
+                 "label-info": _label_info(HOLLOW, "Hollow Tapes", "HT-03")},
             ]}
         if mbid != A:
             return {"artist_mbid": mbid, "release-count": 0, "releases": []}

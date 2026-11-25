@@ -51,6 +51,10 @@ models:
     columns:
       - name: label_mbid
         data_tests: [unique, not_null]
+      - name: n_releases_total
+        description: >
+          Nombre total de sorties du label dans MusicBrainz (null si le label n'a pas été exploré).
+          Les colonnes *_in_scope ne comptent que les artistes crawlés.
 
   - name: fct_artist_releases
     description: >
