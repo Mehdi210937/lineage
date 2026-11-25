@@ -164,6 +164,12 @@ class RawStore:
             [max_depth, max_releases],
         ).fetchall()
 
+    def requeue_errors(self) -> int:
+        """Remet en attente les artistes en erreur (ex. API saturée au run précédent). Renvoie leur nombre."""
+        n = self.count("error")
+        self.con.execute("update raw.crawl_queue set status='pending', updated_at=? where status='error'", [_now()])
+        return n
+
     def count(self, status: str | None = None) -> int:
         if status:
             return self.con.execute("select count(*) from raw.crawl_queue where status=?", [status]).fetchone()[0]

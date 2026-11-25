@@ -8,6 +8,8 @@ autres artistes de ses labels de niche (labels ayant au plus --label-max-release
 
 Le crawl est reprenable : la file est stockée dans DuckDB (raw.crawl_queue).
 Si tu l'interromps (Ctrl+C), relance la même commande, il reprend où il en était.
+Une erreur sur un artiste ou un label (API saturée, 503…) n'arrête jamais le crawl : elle est
+journalisée, l'élément est marqué pour être réessayé au prochain run, et le crawl continue.
 Les réponses déjà en cache depuis moins de LINEAGE_REFRESH_DAYS jours ne sont pas re-téléchargées.
 """
 from __future__ import annotations
@@ -88,6 +90,12 @@ class Crawler:
         # Au-delà de ce nombre de sorties, un label est trop gros pour définir une scène
         # (Polydor, Fiction, [PIAS]...) : on n'enrôle pas ses artistes. 0 = expansion désactivée.
         self.label_max_releases = label_max_releases
+        self.failures = 0  # erreurs isolées pendant ce run (artistes, labels, seeds)
+
+    def _failed(self, what: str, exc: Exception) -> None:
+        """Journalise une erreur sans arrêter le crawl."""
+        self.failures += 1
+        log.error("Échec sur %s, réessayé au prochain run : %s: %s", what, type(exc).__name__, exc)
 
     def _cached(self, source: str, entity_type: str, entity_id: str, fetch, reuse=None):
         """Renvoie le payload en cache s'il est frais, sinon appelle l'API et le stocke.
@@ -106,7 +114,13 @@ class Crawler:
     def resolve_seeds(self, seeds: list[dict]) -> None:
         for seed in seeds:
             name = seed["name"].strip()
-            payload = self._cached("musicbrainz", "artist_search", name.casefold(), lambda: self.api.mb_search(name))
+            try:
+                payload = self._cached(
+                    "musicbrainz", "artist_search", name.casefold(), lambda: self.api.mb_search(name)
+                )
+            except Exception as exc:  # rien n'est mis en cache : la recherche sera refaite au prochain run
+                self._failed(f"la recherche de « {name} »", exc)
+                continue
             match = musicbrainz.best_match(payload, name)
             if not match:
                 log.warning("Aucun résultat MusicBrainz pour « %s »", name)
@@ -157,13 +171,16 @@ class Crawler:
         ceux qui étaient à la profondeur max d'un run précédent, ou crawlés avant l'expansion par labels.
         Les payloads artiste / sorties / influences viennent du cache : aucune requête, sauf pour les labels."""
         for mbid, name, depth in self.store.needing_relation_expansion(max_depth):
-            artist = self.store.get("musicbrainz", "artist", mbid)
-            if artist is None:
-                continue
-            qid = musicbrainz.external_ids(artist).get("wikidata")
-            influences = self.store.get("wikidata", "influences", qid) if qid else None
-            added = self.expand_relations(mbid, depth, artist, influences)
-            log.info("Relations de %s (profondeur %s) : +%s voisins", name, depth, added)
+            try:
+                artist = self.store.get("musicbrainz", "artist", mbid)
+                if artist is None:
+                    continue
+                qid = musicbrainz.external_ids(artist).get("wikidata")
+                influences = self.store.get("wikidata", "influences", qid) if qid else None
+                added = self.expand_relations(mbid, depth, artist, influences)
+                log.info("Relations de %s (profondeur %s) : +%s voisins", name, depth, added)
+            except Exception as exc:  # relations_expanded reste faux : rattrapé au prochain run
+                self._failed(f"les relations de {name} ({mbid})", exc)
         self.catch_up_label_expansion(max_depth)
 
     # --- expansion par labels de niche --------------------------------
@@ -181,12 +198,22 @@ class Crawler:
         )
 
     def expand_labels(self, mbid: str, depth: int, artist: dict | None, releases: dict | None) -> int:
-        """Ajoute à la file les autres artistes des labels de niche de cet artiste."""
+        """Ajoute à la file les autres artistes des labels de niche de cet artiste.
+
+        Un label en erreur n'empêche pas d'explorer les autres ; l'artiste n'est alors pas marqué
+        comme exploré, et ses labels seront repris au prochain run (les labels déjà téléchargés
+        viennent du cache)."""
         if self.label_max_releases <= 0:
             return 0
         added = 0
+        all_ok = True
         for label_mbid, label_name in musicbrainz.artist_labels(artist, releases).items():
-            payload = self._label_releases(label_mbid)
+            try:
+                payload = self._label_releases(label_mbid)
+            except Exception as exc:
+                self._failed(f"le label « {label_name} » ({label_mbid})", exc)
+                all_ok = False
+                continue
             if not payload:
                 continue
             n_releases = payload.get("release-count", 0)
@@ -196,7 +223,8 @@ class Crawler:
             for n_mbid, n_name in musicbrainz.label_artists(payload):
                 if n_mbid != mbid:
                     added += self.store.enqueue(n_mbid, n_name, depth + 1, mbid, f"musicbrainz:label:{label_name}")
-        self.store.set_label_expansion(mbid, self.label_max_releases)
+        if all_ok:
+            self.store.set_label_expansion(mbid, self.label_max_releases)
         return added
 
     def catch_up_label_expansion(self, max_depth: int) -> None:
@@ -205,12 +233,17 @@ class Crawler:
         if self.label_max_releases <= 0:
             return
         for mbid, name, depth in self.store.needing_label_expansion(max_depth, self.label_max_releases):
-            artist = self.store.get("musicbrainz", "artist", mbid)
-            releases = self.store.get("musicbrainz", "artist_releases", mbid)
-            added = self.expand_labels(mbid, depth, artist, releases)
-            log.info("Labels de %s (profondeur %s) : +%s voisins", name, depth, added)
+            try:
+                artist = self.store.get("musicbrainz", "artist", mbid)
+                releases = self.store.get("musicbrainz", "artist_releases", mbid)
+                added = self.expand_labels(mbid, depth, artist, releases)
+                log.info("Labels de %s (profondeur %s) : +%s voisins", name, depth, added)
+            except Exception as exc:
+                self._failed(f"les labels de {name} ({mbid})", exc)
 
     def run(self, max_depth: int, max_artists: int) -> None:
+        if retried := self.store.requeue_errors():
+            log.info("%s artiste(s) en erreur au run précédent remis en attente", retried)
         self.catch_up(max_depth)
         processed = 0
         while processed < max_artists:
@@ -222,13 +255,14 @@ class Crawler:
                 added = self.process_artist(mbid, depth, max_depth)
                 self.store.mark(mbid, "done")
                 log.info("[%s] %s (profondeur %s) : +%s voisins", processed + 1, name, depth, added)
-            except Exception as exc:  # on note l'erreur et on continue le crawl
-                log.exception("Échec sur %s (%s)", name, mbid)
-                self.store.mark(mbid, "error", str(exc)[:500])
+            except Exception as exc:  # on note l'erreur et on continue ; réessayé au prochain run
+                self._failed(f"l'artiste {name} ({mbid})", exc)
+                self.store.mark(mbid, "error", f"{type(exc).__name__}: {exc}"[:500])
             processed += 1
         log.info(
-            "Terminé : %s traités dans ce run, %s en attente, %s en erreur",
-            processed, self.store.count("pending"), self.store.count("error"),
+            "Terminé : %s traités dans ce run, %s en attente, %s en erreur, %s erreur(s) isolée(s) "
+            "(réessayées au prochain run)",
+            processed, self.store.count("pending"), self.store.count("error"), self.failures,
         )
 
 

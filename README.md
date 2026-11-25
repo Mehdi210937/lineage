@@ -65,6 +65,12 @@ Le crawl est **reprenable** : interromps-le avec Ctrl+C et relance la même comm
 s'était arrêté. Les réponses déjà téléchargées depuis moins de `LINEAGE_REFRESH_DAYS` jours ne sont pas
 redemandées.
 
+Une API saturée n'arrête pas le crawl. Sur 429 / 503, le client respecte l'en-tête `Retry-After`
+(sinon attente exponentielle), avec 8 tentatives au plus et 120 s d'attente maximum ; une requête
+MusicBrainz part au plus toutes les 1,5 s. Si un artiste ou un label échoue malgré tout, l'erreur est
+journalisée et l'élément est repris au run suivant : les artistes en `error` repassent en attente, et
+les labels d'un artiste ne sont marqués explorés que si tous ont répondu.
+
 Les voisins d'un artiste sont ses relations MusicBrainz (membres, alias, collaborations), ses
 influences Wikidata **et les autres artistes de ses labels de niche** : seuls les labels ayant au plus
 `--label-max-releases` sorties au total sont explorés (300 par défaut, `0` désactive l'expansion).
