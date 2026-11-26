@@ -6,7 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from fake_api import A, B, BIG_LABEL, C, D, E, G, HOLLOW, LABEL
+from fake_api import A, B, BIG_LABEL, C, D, E, F, G, HOLLOW, LABEL
 
 from lineage.explore import coach
 from lineage.explore.db import resolve_db_path
@@ -63,7 +63,26 @@ def test_two_hops_and_label_peers(marts_db):
     assert {B, D, E} <= set(two.nodes)
 
     peers = artist_neighborhood(marts_db, E, hops=1, sources=(), label_peers=10)
-    assert {LABEL, HOLLOW, A, D, G} <= set(peers.nodes)  # artistes de ses labels
+    assert {LABEL, HOLLOW, A, B, D} <= set(peers.nodes)  # artistes de ses labels
+    assert G not in peers.nodes  # E vient d'un label : Hollow Tapes n'a pas été exploré
+
+
+def test_out_of_perimeter_artists_are_hidden_by_default(marts_db):
+    """Pop Star (F) a été crawlé par le gros label avec d'anciennes règles : il reste en base, masqué."""
+    from lineage.explore.db import list_artists, query
+
+    assert query(marts_db, "select perimeter from marts.dim_artists where artist_mbid = ?", [F]) == [{"perimeter": "out"}]
+    assert F not in {a["artist_mbid"] for a in list_artists(marts_db)}
+    assert F in {a["artist_mbid"] for a in list_artists(marts_db, include_out=True)}
+
+    hidden = artist_neighborhood(marts_db, A, label_peers=10)
+    shown = artist_neighborhood(marts_db, A, label_peers=10, include_out=True)
+    assert BIG_LABEL in hidden.nodes and F not in hidden.nodes
+    assert F in shown.nodes
+
+    mega = lambda rows: next(r for r in rows if r["label_name"] == "Mega Major")  # noqa: E731
+    assert mega(rank_labels(marts_db, [A], current_year=2026, include_out=True))["n_artists_in_scope"] == 2
+    assert "Pop Star" not in str(coach.build_facts(marts_db, [A]))
 
 
 # --- labels -----------------------------------------------------------------
@@ -73,7 +92,7 @@ def test_rank_labels_explains_shared_artists(marts_db):
     ranked = {r["label_name"]: r for r in rank_labels(marts_db, [A], current_year=2026)}
     assert set(ranked) == {"Crypt Records", "Mega Major", "Hollow Tapes"}
     assert ranked["Crypt Records"]["shared_references"] == ["Test Coven"]
-    assert ranked["Crypt Records"]["shared_neighbors"] == ["Crypt Sister"]
+    assert ranked["Crypt Records"]["shared_neighbors"] == ["Crypt Sister", "Ghost Ritual"]
     assert ranked["Hollow Tapes"]["shared_neighbors"] == ["Crypt Sister", "Far Away Band"]
     assert ranked["Hollow Tapes"]["recency"] == 1.0
     assert ranked["Mega Major"]["size"] == 5000  # taille réelle, pas seulement le périmètre crawlé
@@ -90,7 +109,6 @@ def test_size_preference_flips_order(marts_db):
 
 def test_rank_labels_edge_cases(marts_db):
     assert rank_labels(marts_db, []) == []
-    assert [r["label_name"] for r in rank_labels(marts_db, [G])] == ["Hollow Tapes"]
     assert rank_labels(marts_db, ["inconnu"]) == []
 
 

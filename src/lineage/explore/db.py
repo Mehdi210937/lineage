@@ -13,6 +13,12 @@ import duckdb
 
 DEFAULT_DB = Path("data/lineage.duckdb")
 
+# Arête dont aucune extrémité crawlée n'est hors périmètre (à utiliser sur un alias `e` de edges_artists).
+EDGE_IN_PERIMETER = """not exists (
+    select 1 from marts.dim_artists p
+    where p.artist_mbid in (e.from_artist_mbid, e.to_artist_mbid) and not p.in_perimeter
+)"""
+
 
 def resolve_db_path(argv: list[str] | None = None) -> Path:
     """`--db chemin` (après `--` avec streamlit run), sinon LINEAGE_APP_DB, sinon data/lineage.duckdb."""
@@ -31,15 +37,18 @@ def query(db_path: Path | str, sql: str, params: list[Any] | None = None) -> lis
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
-def list_artists(db_path: Path | str) -> list[dict[str, Any]]:
+def list_artists(db_path: Path | str, include_out: bool = False) -> list[dict[str, Any]]:
+    """Artistes crawlés ; ceux hors périmètre seulement si include_out."""
     return query(
         db_path,
         """
-        select artist_mbid, artist_name, country_code, is_seed, crawl_depth,
+        select artist_mbid, artist_name, country_code, is_seed, crawl_depth, perimeter,
                discogs_profile is not null as has_bio
         from marts.dim_artists
+        where in_perimeter or ?
         order by is_seed desc, artist_name
         """,
+        [include_out],
     )
 
 

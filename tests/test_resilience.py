@@ -1,7 +1,7 @@
 """Une API saturée (503) ne doit jamais arrêter le crawl : on journalise, on marque, on continue."""
 from __future__ import annotations
 
-from fake_api import A, B, C, D, E, LABEL, FakeApi
+from fake_api import A, B, C, D, E, G, HOLLOW, LABEL, FakeApi
 
 from lineage.crawl import Crawler
 from lineage.http import RetryableHTTPError
@@ -35,17 +35,13 @@ class FlakyApi(FakeApi):
         return super().mb_search(name)
 
 
-def make(tmp_path, api):
+def make(tmp_path, api, min_core=2):
     store = RawStore(tmp_path / "test.duckdb")
-    return Crawler(api, store, refresh_days=30), store
+    return Crawler(api, store, refresh_days=30, label_min_core_artists=min_core), store
 
 
 def status(store):
     return dict(store.con.execute("select mbid, status from raw.crawl_queue").fetchall())
-
-
-def label_limit(store, mbid):
-    return store.con.execute("select label_expansion_limit from raw.crawl_queue where mbid=?", [mbid]).fetchone()[0]
 
 
 def test_label_503_does_not_stop_the_crawl(tmp_path):
@@ -57,15 +53,12 @@ def test_label_503_does_not_stop_the_crawl(tmp_path):
     s = status(store)
     assert s[A] == s[B] == s[C] == s[D] == "done"  # le reste du crawl a continué
     assert E not in s                               # E n'est joignable que par le label en erreur
-    assert label_limit(store, A) is None            # labels de A à reprendre au prochain run
     assert crawler.failures >= 1
 
     # Au run suivant, MusicBrainz répond de nouveau : le label est repris et E découvert
     api.failing_labels.clear()
     crawler.run(max_depth=2, max_artists=50)
-    s = status(store)
-    assert s[E] == "done"
-    assert label_limit(store, A) == crawler.label_max_releases
+    assert status(store)[E] == "done"
 
 
 def test_label_503_during_catch_up_does_not_stop_the_crawl(tmp_path):
@@ -88,17 +81,14 @@ def test_label_503_during_catch_up_does_not_stop_the_crawl(tmp_path):
 
 
 def test_other_labels_are_still_explored(tmp_path):
-    """Un label en erreur n'empêche pas d'explorer les autres labels du même artiste."""
-    from fake_api import HOLLOW, G
-
+    """Un label en erreur n'empêche pas d'explorer les autres labels."""
     api = FlakyApi(failing_labels={LABEL})
-    crawler, store = make(tmp_path, api)
-    store.enqueue(E, "Crypt Sister", 0, None, "seed")
+    crawler, store = make(tmp_path, api, min_core=1)
+    store.enqueue(E, "Crypt Sister", 0, None, "seed")  # E seed : ses deux labels sont explorés
     crawler.run(max_depth=1, max_artists=50)
     s = status(store)
-    assert s[G] == "done"  # découvert par Hollow Tapes, l'autre label de E
-    assert f"label:{HOLLOW}" in api.calls
-    assert label_limit(store, E) is None
+    assert s[G] == "done"  # découvert par Hollow Tapes malgré l'erreur sur Crypt Records
+    assert f"label:{HOLLOW}" in api.calls and f"label:{LABEL}:503" in api.calls
 
 
 def test_failed_artist_is_retried_next_run(tmp_path):

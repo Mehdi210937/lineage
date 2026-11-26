@@ -18,8 +18,8 @@ def status(url: str, model: str) -> tuple[bool, str]:
 
 
 @st.cache_data(show_spinner=False)
-def facts_for(path: str, version: float, mbids: tuple):
-    return build_facts(path, list(mbids))
+def facts_for(path: str, version: float, mbids: tuple, include_out: bool):
+    return build_facts(path, list(mbids), include_out)
 
 
 st.title("Coach de production")
@@ -39,7 +39,7 @@ if not picked:
     st.info("Choisis au moins une inspiration.")
     st.stop()
 
-facts = facts_for(str(ui.db_path()), ui.db_version(), tuple(picked))
+facts = facts_for(str(ui.db_path()), ui.db_version(), tuple(picked), ui.show_out())
 by_id = {f.id: f for f in facts}
 with st.expander(f"Faits transmis au coach ({len(facts)})"):
     st.caption("C'est tout ce que le LLM reçoit : il n'a pas le droit d'utiliser autre chose.")

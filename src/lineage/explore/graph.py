@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from lineage.explore.db import query
+from lineage.explore.db import EDGE_IN_PERIMETER, query
 
 ALL_SOURCES = ("musicbrainz", "wikidata", "llm")
 
@@ -64,8 +64,10 @@ def artist_neighborhood(
     min_llm_confidence: float = 0.0,
     include_labels: bool = True,
     label_peers: int = 10,
+    include_out: bool = False,
 ) -> Neighborhood:
-    """Artistes à `hops` sauts de `mbid`, ses labels, et jusqu'à `label_peers` autres artistes par label."""
+    """Artistes à `hops` sauts de `mbid`, ses labels, et jusqu'à `label_peers` autres artistes par label.
+    Les artistes hors périmètre (dim_artists.in_perimeter) sont masqués sauf si include_out."""
     hood = Neighborhood()
     center = query(db_path, "select artist_name from marts.dim_artists where artist_mbid = ?", [mbid])
     hood.add_node(Node(mbid, center[0]["artist_name"] if center else mbid[:8], "artist", is_center=True))
@@ -77,14 +79,15 @@ def artist_neighborhood(
             break
         rows = query(
             db_path,
-            """
-            select * from marts.edges_artists
+            f"""
+            select * from marts.edges_artists e
             where (from_artist_mbid in (select unnest(?)) or to_artist_mbid in (select unnest(?)))
               and source_system in (select unnest(?))
               and (source_system <> 'llm' or coalesce(confidence, 0) >= ?)
+              and (? or {EDGE_IN_PERIMETER})
             order by source_system, edge_type, from_artist_mbid, to_artist_mbid
             """,
-            [list(frontier), list(frontier), list(sources), min_llm_confidence],
+            [list(frontier), list(frontier), list(sources), min_llm_confidence, include_out],
         )
         next_frontier = set()
         for r in rows:
@@ -103,7 +106,7 @@ def artist_neighborhood(
         frontier = next_frontier
 
     if include_labels:
-        _add_labels(db_path, hood, mbid, label_peers)
+        _add_labels(db_path, hood, mbid, label_peers, include_out)
     return hood
 
 
@@ -118,7 +121,7 @@ def _label_evidence(r: dict) -> str:
     return "MusicBrainz : " + (", ".join(parts) or "lien artiste–label")
 
 
-def _add_labels(db_path: Path | str, hood: Neighborhood, mbid: str, label_peers: int) -> None:
+def _add_labels(db_path: Path | str, hood: Neighborhood, mbid: str, label_peers: int, include_out: bool) -> None:
     labels = query(
         db_path,
         "select * from marts.bridge_artist_labels where artist_mbid = ? order by n_releases desc, label_name",
@@ -135,11 +138,11 @@ def _add_labels(db_path: Path | str, hood: Neighborhood, mbid: str, label_peers:
             select b.*, a.artist_name
             from marts.bridge_artist_labels b
             join marts.dim_artists a using (artist_mbid)
-            where b.label_mbid = ? and b.artist_mbid <> ?
+            where b.label_mbid = ? and b.artist_mbid <> ? and (a.in_perimeter or ?)
             order by b.last_release_year desc nulls last, a.artist_name
             limit ?
             """,
-            [lab["label_mbid"], mbid, label_peers],
+            [lab["label_mbid"], mbid, include_out, label_peers],
         )
         for p in peers:
             hood.add_node(Node(p["artist_mbid"], p["artist_name"], "artist"))

@@ -24,17 +24,23 @@ def db_version() -> float:
         return 0.0
 
 
+def show_out() -> bool:
+    """Interrupteur de la barre latérale : afficher aussi les artistes hors périmètre."""
+    return bool(st.session_state.get("show_out", False))
+
+
 @st.cache_data(show_spinner=False)
-def _artists(path: str, version: float) -> list[dict]:
-    return xdb.list_artists(path)
+def _artists(path: str, version: float, include_out: bool) -> list[dict]:
+    return xdb.list_artists(path, include_out)
 
 
 def artists() -> list[dict]:
-    return _artists(str(db_path()), db_version())
+    return _artists(str(db_path()), db_version(), show_out())
 
 
 def artist_label(a: dict) -> str:
-    extra = ", ".join(x for x in (a["country_code"], "seed" if a["is_seed"] else None) if x)
+    extra = ", ".join(x for x in (a["country_code"], "seed" if a["is_seed"] else None,
+                                  "hors périmètre" if a.get("perimeter") == "out" else None) if x)
     return f"{a['artist_name']} ({extra})" if extra else a["artist_name"]
 
 

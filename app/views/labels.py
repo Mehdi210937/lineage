@@ -9,8 +9,9 @@ from lineage.explore.labels import RECENCY_WINDOW, Weights, rank_labels
 
 
 @st.cache_data(show_spinner=False)
-def ranking(path: str, version: float, refs: tuple, weights: Weights, prefer_small: bool) -> list[dict]:
-    return rank_labels(path, list(refs), weights, prefer_small)
+def ranking(path: str, version: float, refs: tuple, weights: Weights, prefer_small: bool,
+            include_out: bool) -> list[dict]:
+    return rank_labels(path, list(refs), weights, prefer_small, include_out=include_out)
 
 
 st.title("Labels pour ma démo")
@@ -41,7 +42,8 @@ if not refs:
     st.info("Choisis au moins un artiste de référence.")
     st.stop()
 
-rows = ranking(str(ui.db_path()), ui.db_version(), tuple(refs), Weights(w_prox, w_rec, w_size), prefer_small)
+rows = ranking(str(ui.db_path()), ui.db_version(), tuple(refs), Weights(w_prox, w_rec, w_size), prefer_small,
+               ui.show_out())
 if not rows:
     st.warning("Aucun label relié à ces artistes ni à leurs voisins dans la base.")
     st.stop()

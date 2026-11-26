@@ -45,6 +45,10 @@ if error:
     st.error(error)
     st.stop()
 
+with st.sidebar:
+    st.toggle("Afficher les artistes hors périmètre", key="show_out",
+              help="Artistes crawlés avec d'anciennes règles, hors de la scène (voir --rescope).")
+
 nav = st.navigation([
     st.Page("views/graph.py", title="Graphe", icon=":material/hub:", default=True),
     st.Page("views/labels.py", title="Labels pour ma démo", icon=":material/album:"),

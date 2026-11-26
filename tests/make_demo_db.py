@@ -1,5 +1,7 @@
 """Crée une base de démo avec les artistes fictifs, pour tester dbt et l'app sans réseau.
 
+Le crawl suit d'abord des règles larges (tout label jusqu'à 10 000 sorties), puis --rescope applique
+le périmètre actuel : Pop Star, venu du gros label, reste en base mais passe hors périmètre.
 Ajoute aussi des affirmations LLM fictives (raw.llm_influence_claims), sans appeler de LLM.
 
     python tests/make_demo_db.py data/demo.duckdb
@@ -22,9 +24,11 @@ def make_demo_db(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.unlink(missing_ok=True)
     store = RawStore(path)
-    crawler = Crawler(FakeApi(), store)
+    crawler = Crawler(FakeApi(), store, label_max_releases=10_000, label_min_core_artists=1)
     crawler.resolve_seeds([{"name": "Test Coven", "note": "seed fictif"}])
     crawler.run(max_depth=2, max_artists=50)
+    crawler.label_max_releases, crawler.label_min_core_artists = 100, 2
+    crawler.rescope(max_depth=2, apply=True)
     store.con.executemany(
         "insert into raw.llm_influence_claims values (?, 'demo-fictif', ?, ?, ?, ?, ?)",
         [(*claim, datetime(2026, 1, 1)) for claim in DEMO_LLM_CLAIMS],

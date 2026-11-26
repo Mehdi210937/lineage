@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from lineage.explore.db import query
+from lineage.explore.db import EDGE_IN_PERIMETER, query
 
 RECENCY_WINDOW = 10
 
@@ -33,7 +33,9 @@ def rank_labels(
     weights: Weights = Weights(),
     prefer_small: bool = True,
     current_year: int | None = None,
+    include_out: bool = False,
 ) -> list[dict]:
+    """Labels classés pour ces références ; les artistes hors périmètre ne comptent pas, sauf include_out."""
     if not reference_mbids:
         return []
     current_year = current_year or date.today().year
@@ -43,13 +45,14 @@ def rank_labels(
         r["other"]
         for r in query(
             db_path,
-            """
+            f"""
             select case when from_artist_mbid in (select unnest(?)) then to_artist_mbid
                         else from_artist_mbid end as other
-            from marts.edges_artists
-            where from_artist_mbid in (select unnest(?)) or to_artist_mbid in (select unnest(?))
+            from marts.edges_artists e
+            where (from_artist_mbid in (select unnest(?)) or to_artist_mbid in (select unnest(?)))
+              and (? or {EDGE_IN_PERIMETER})
             """,
-            [list(refs)] * 3,
+            [list(refs)] * 3 + [include_out],
         )
     } - refs
 
@@ -65,8 +68,9 @@ def rank_labels(
         where l.label_mbid in (
             select label_mbid from marts.bridge_artist_labels where artist_mbid in (select unnest(?))
         )
+          and (coalesce(a.in_perimeter, true) or ?)
         """,
-        [list(refs | neighbors)],
+        [list(refs | neighbors), include_out],
     )
 
     labels: dict[str, dict] = {}

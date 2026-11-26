@@ -49,6 +49,10 @@ alter table raw.crawl_queue add column if not exists label_expansion_limit integ
 -- Voisins MusicBrainz / Wikidata déjà ajoutés à la file (null = pas encore, ex. artiste traité
 -- à la profondeur max d'un run précédent).
 alter table raw.crawl_queue add column if not exists relations_expanded boolean;
+-- Périmètre (voir Crawler.rescope) : core = seeds et artistes reliés à eux par MusicBrainz / Wikidata,
+-- label = découvert par un label de la scène (crawlé, jamais étendu), out = hors périmètre.
+alter table raw.crawl_queue add column if not exists scope varchar;
+alter table raw.crawl_queue add column if not exists scope_reason varchar;
 
 -- Relations extraites des bios par le LLM (src/lineage/extract/run.py). Une ligne sans other_artist
 -- marque un artiste traité sans relation trouvée.
@@ -62,6 +66,14 @@ create table if not exists raw.llm_influence_claims (
     extracted_at   timestamp
 );
 """
+
+
+LABEL_VIA_PREFIX = "musicbrainz:label:"
+
+
+def scope_from_via(via: str | None) -> str:
+    """Périmètre par défaut d'après la provenance (avant tout --rescope)."""
+    return "label" if (via or "").startswith(LABEL_VIA_PREFIX) else "core"
 
 
 def _now() -> datetime:
@@ -106,18 +118,60 @@ class RawStore:
 
     # --- file de crawl -----------------------------------------------
     def enqueue(self, mbid: str, name: str | None, depth: int, discovered_from: str | None, via: str | None) -> bool:
-        """Ajoute un artiste s'il n'est pas déjà connu. Renvoie True s'il est nouveau."""
+        """Ajoute un artiste s'il n'est pas déjà connu. Renvoie True s'il est nouveau.
+
+        Son périmètre découle de sa provenance : `label` s'il vient d'un label, sinon `core`
+        (seed, ou relation d'un artiste du noyau : seuls ceux-là sont étendus)."""
         exists = self.con.execute("select 1 from raw.crawl_queue where mbid=?", [mbid]).fetchone()
         if exists:
             return False
         self.con.execute(
             """
-            insert into raw.crawl_queue (mbid, name, depth, discovered_from, discovered_via, status, error, updated_at)
-            values (?, ?, ?, ?, ?, 'pending', null, ?)
+            insert into raw.crawl_queue
+                (mbid, name, depth, discovered_from, discovered_via, status, error, updated_at, scope)
+            values (?, ?, ?, ?, ?, 'pending', null, ?, ?)
             """,
-            [mbid, name, depth, discovered_from, via, _now()],
+            [mbid, name, depth, discovered_from, via, _now(), scope_from_via(via)],
         )
         return True
+
+    def scope_of(self, mbid: str) -> str | None:
+        row = self.con.execute("select scope, discovered_via from raw.crawl_queue where mbid=?", [mbid]).fetchone()
+        if row is None:
+            return None
+        return row[0] or scope_from_via(row[1])
+
+    def queue_rows(self) -> list[dict]:
+        cur = self.con.execute(
+            "select mbid, name, depth, discovered_from, discovered_via, status, scope, scope_reason from raw.crawl_queue"
+        )
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def core_done(self) -> list[tuple[str, int]]:
+        """(mbid, profondeur) des artistes du noyau déjà traités."""
+        rows = self.con.execute(
+            "select mbid, depth, scope, discovered_via from raw.crawl_queue where status = 'done'"
+        ).fetchall()
+        return [(m, d) for m, d, scope, via in rows if (scope or scope_from_via(via)) == "core"]
+
+    def set_scopes(self, rows: list[tuple[str, str, str | None]]) -> None:
+        """Écrit (mbid, périmètre, raison). Hors périmètre : pending / error → out_of_scope ;
+        de retour dans le périmètre : out_of_scope → pending. Les artistes déjà traités restent done."""
+        self.con.executemany(
+            """
+            update raw.crawl_queue set
+                scope = $2,
+                scope_reason = $3,
+                status = case
+                    when $2 = 'out' and status in ('pending', 'error') then 'out_of_scope'
+                    when $2 <> 'out' and status = 'out_of_scope' then 'pending'
+                    else status end,
+                updated_at = $4
+            where mbid = $1
+            """,
+            [(m, s, r, _now()) for m, s, r in rows],
+        )
 
     def next_pending(self, max_depth: int) -> tuple[str, str, int] | None:
         return self.con.execute(
@@ -139,30 +193,16 @@ class RawStore:
         self.con.execute("update raw.crawl_queue set relations_expanded=true where mbid=?", [mbid])
 
     def needing_relation_expansion(self, max_depth: int) -> list[tuple[str, str, int]]:
-        """Artistes déjà traités dont les voisins n'ont pas été ajoutés (traités à la profondeur max)."""
-        return self.con.execute(
+        """Artistes du noyau déjà traités dont les voisins n'ont pas été ajoutés (traités à la profondeur max)."""
+        rows = self.con.execute(
             """
-            select mbid, name, depth from raw.crawl_queue
+            select mbid, name, depth, scope, discovered_via from raw.crawl_queue
             where status = 'done' and depth < ? and not coalesce(relations_expanded, false)
             order by depth, updated_at
             """,
             [max_depth],
         ).fetchall()
-
-    def set_label_expansion(self, mbid: str, max_releases: int) -> None:
-        self.con.execute("update raw.crawl_queue set label_expansion_limit=? where mbid=?", [max_releases, mbid])
-
-    def needing_label_expansion(self, max_depth: int, max_releases: int) -> list[tuple[str, str, int]]:
-        """Artistes déjà traités dont les labels n'ont pas été explorés (ou avec un seuil plus bas)."""
-        return self.con.execute(
-            """
-            select mbid, name, depth from raw.crawl_queue
-            where status = 'done' and depth < ?
-              and (label_expansion_limit is null or label_expansion_limit < ?)
-            order by depth, updated_at
-            """,
-            [max_depth, max_releases],
-        ).fetchall()
+        return [(m, n, d) for m, n, d, scope, via in rows if (scope or scope_from_via(via)) == "core"]
 
     def requeue_errors(self) -> int:
         """Remet en attente les artistes en erreur (ex. API saturée au run précédent). Renvoie leur nombre."""

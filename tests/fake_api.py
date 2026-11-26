@@ -11,7 +11,7 @@ D = "00000000-0000-0000-0000-00000000000d"  # Far Away Band (profondeur 2)
 E = "00000000-0000-0000-0000-00000000000e"  # Crypt Sister (même label de niche que A)
 F = "00000000-0000-0000-0000-00000000000f"  # Pop Star (seulement sur le gros label)
 G = "00000000-0000-0000-0000-000000000010"  # Veil Choir (label de niche de E, profondeur 2)
-LABEL = "11111111-1111-1111-1111-111111111111"      # Crypt Records : label de niche (3 sorties)
+LABEL = "11111111-1111-1111-1111-111111111111"      # Crypt Records : label de la scène (A et B, du noyau)
 BIG_LABEL = "22222222-2222-2222-2222-222222222222"  # Mega Major : 5000 sorties, à ne pas explorer
 HOLLOW = "33333333-3333-3333-3333-333333333333"     # Hollow Tapes : label de niche récent de E
 VARIOUS = "89ad4ac3-39f7-470e-963a-56509c546377"    # vrai MBID de « Various Artists »
@@ -78,6 +78,9 @@ ARTISTS = {
     E: {"id": E, "name": "Crypt Sister", "sort-name": "Crypt Sister", "type": "Person", "country": "US",
         "life-span": {"begin": "1991", "end": None, "ended": False},
         "genres": [{"name": "witch house", "count": 2}], "tags": [], "relations": []},
+    F: {"id": F, "name": "Pop Star", "sort-name": "Star, Pop", "type": "Person", "country": "GB",
+        "life-span": {"begin": "2005", "end": None, "ended": False},
+        "genres": [{"name": "pop", "count": 4}], "tags": [], "relations": []},
     G: {"id": G, "name": "Veil Choir", "sort-name": "Veil Choir", "type": "Group", "country": "DE",
         "life-span": {"begin": "2022", "end": None, "ended": False},
         "genres": [{"name": "darkwave", "count": 1}], "tags": [], "relations": []},
@@ -94,8 +97,9 @@ def _label_info(label_mbid, name, catno=None):
 
 # Sorties des labels, au format de /ws/2/release?label=...&inc=artist-credits
 LABEL_RELEASES = {
-    LABEL: {"release-count": 3, "releases": [
+    LABEL: {"release-count": 4, "releases": [
         {"id": "r1", "title": "Hex EP", "artist-credit": _credit(A, "Test Coven")},
+        {"id": "r11", "title": "Ritual Tape", "artist-credit": _credit(B, "Ghost Ritual")},
         {"id": "r5", "title": "Crypt Sister LP", "artist-credit": _credit(E, "Crypt Sister")},
         {"id": "r6", "title": "Crypt Sampler", "artist-credit": _credit(VARIOUS, "Various Artists")},
     ]},
@@ -144,6 +148,16 @@ class FakeApi:
             return {"artist_mbid": mbid, "release-count": 1, "releases": [
                 {"id": "r10", "title": "Veil Choir I", "date": "2026", "status": "Official",
                  "label-info": _label_info(HOLLOW, "Hollow Tapes", "HT-03")},
+            ]}
+        if mbid == B:  # Ghost Ritual (noyau) sort aussi sur Crypt Records : le label est partagé
+            return {"artist_mbid": mbid, "release-count": 1, "releases": [
+                {"id": "r11", "title": "Ritual Tape", "date": "2011", "status": "Official",
+                 "label-info": _label_info(LABEL, "Crypt Records", "CRYPT003")},
+            ]}
+        if mbid == F:
+            return {"artist_mbid": mbid, "release-count": 1, "releases": [
+                {"id": "r7", "title": "Chart Hit", "date": "2024", "status": "Official",
+                 "label-info": _label_info(BIG_LABEL, "Mega Major", "MM-2")},
             ]}
         if mbid != A:
             return {"artist_mbid": mbid, "release-count": 0, "releases": []}

@@ -6,6 +6,18 @@ models:
     columns:
       - name: artist_mbid
         data_tests: [unique, not_null]
+      - name: perimeter
+        description: >
+          core (seeds et artistes reliés par MusicBrainz / Wikidata), label (artiste d'un label de la
+          scène, jamais étendu) ou out (hors périmètre, gardé en base). Recalculé par --rescope.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["core", "label", "out"]
+      - name: in_perimeter
+        description: Faux pour les artistes hors périmètre, que l'app masque par défaut.
+        data_tests: [not_null]
       - name: crawl_depth
         description: Distance (en sauts) depuis l'artiste de départ le plus proche.
         data_tests:

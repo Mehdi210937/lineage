@@ -52,3 +52,12 @@ def test_missing_db_shows_help(monkeypatch, tmp_path):
     at = AppTest.from_file(MAIN, default_timeout=30).run()
     assert not at.exception
     assert "make_demo_db" in at.error[0].value
+
+
+def test_out_of_perimeter_toggle(app):
+    app.run()
+    options = lambda: app.selectbox(key="graph_artist").options  # noqa: E731
+    assert not any("Pop Star" in o for o in options())
+    app.toggle(key="show_out").set_value(True).run()
+    assert not app.exception
+    assert any("Pop Star (GB, hors périmètre)" == o for o in options())

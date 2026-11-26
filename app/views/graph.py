@@ -13,8 +13,8 @@ from lineage.explore.graph import ALL_SOURCES, Neighborhood, artist_neighborhood
 
 @st.cache_data(show_spinner=False)
 def neighborhood(path: str, version: float, mbid: str, hops: int, sources: tuple, min_conf: float,
-                 include_labels: bool, label_peers: int) -> Neighborhood:
-    return artist_neighborhood(path, mbid, hops, sources, min_conf, include_labels, label_peers)
+                 include_labels: bool, label_peers: int, include_out: bool) -> Neighborhood:
+    return artist_neighborhood(path, mbid, hops, sources, min_conf, include_labels, label_peers, include_out)
 
 
 def render(hood: Neighborhood, dark: bool) -> str:
@@ -69,7 +69,7 @@ with st.expander("Filtres"):
     label_peers = c3.slider("Autres artistes par label", 0, 30, 10, disabled=not include_labels)
 
 hood = neighborhood(str(ui.db_path()), ui.db_version(), mbid, hops, tuple(sources), min_conf,
-                    include_labels, label_peers)
+                    include_labels, label_peers, ui.show_out())
 dark = st.context.theme.type == "dark"
 components.html(render(hood, dark), height=640)
 st.caption("Orange : l'artiste choisi · bleu : artistes crawlés · gris : hors périmètre · violet : labels. "

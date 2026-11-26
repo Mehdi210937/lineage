@@ -15,7 +15,7 @@ from pathlib import Path
 import httpx
 from pydantic import BaseModel, Field
 
-from lineage.explore.db import query
+from lineage.explore.db import EDGE_IN_PERIMETER, query
 from lineage.explore.graph import EDGE_LABELS
 
 MAX_BIO_CHARS = 1500
@@ -70,7 +70,7 @@ def _year_span(begin, end) -> str:
     return f"depuis {begin}" if begin else ""
 
 
-def build_facts(db_path: Path | str, mbids: list[str]) -> list[Fact]:
+def build_facts(db_path: Path | str, mbids: list[str], include_out: bool = False) -> list[Fact]:
     facts: list[Fact] = []
 
     def add(artist: str, source: str, text: str, citation: str | None = None) -> None:
@@ -97,15 +97,16 @@ def build_facts(db_path: Path | str, mbids: list[str]) -> list[Fact]:
 
         edges = query(
             db_path,
-            """
-            select * from marts.edges_artists
-            where from_artist_mbid = ? or to_artist_mbid = ?
+            f"""
+            select * from marts.edges_artists e
+            where (from_artist_mbid = ? or to_artist_mbid = ?)
+              and (? or {EDGE_IN_PERIMETER})
             -- les influences et comparaisons d'abord : elles parlent du son
             order by case source_system when 'llm' then 0 when 'wikidata' then 1 else 2 end,
                      confidence desc nulls last, edge_type
             limit ?
             """,
-            [mbid, mbid, MAX_EDGES_PER_ARTIST],
+            [mbid, mbid, include_out, MAX_EDGES_PER_ARTIST],
         )
         for e in edges:
             src = e["from_artist_name"] or e["from_artist_mbid"][:8]
