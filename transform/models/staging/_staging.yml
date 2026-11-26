@@ -68,3 +68,9 @@ models:
           - accepted_values:
               arguments:
                 values: ["influenced_by", "influenced", "compared_to", "collaborated_with", "sampled"]
+      - name: text_source
+        description: Texte d'où vient la citation (bio Discogs nettoyée ou article Wikipédia).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["discogs", "wikipedia"]

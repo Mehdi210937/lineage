@@ -8,6 +8,7 @@ select
     r.other_artist,
     r.other_artist_key,
     r.relation,
+    r.text_source,
     r.match_status,
     r.n_candidates,
     r.candidate_mbids,

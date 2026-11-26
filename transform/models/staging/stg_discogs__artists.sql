@@ -3,6 +3,8 @@ select
     entity_id                         as discogs_artist_id,
     payload ->> '$.name'              as artist_name,
     nullif(trim(payload ->> '$.profile'), '') as profile,
+    -- texte envoyé au LLM et dans lequel ses citations sont vérifiées
+    {{ clean_discogs_markup("payload ->> '$.profile'") }} as profile_clean,
     payload ->> '$.data_quality'      as data_quality,
     fetched_at
 from {{ source('raw', 'api_responses') }}

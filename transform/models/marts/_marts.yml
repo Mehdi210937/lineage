@@ -47,6 +47,8 @@ models:
           - accepted_values:
               arguments:
                 values: ["musicbrainz", "wikidata", "llm"]
+      - name: evidence_source
+        description: Pour les arêtes llm, le texte cité (discogs = bio Discogs, wikipedia = article).
       - name: confidence
         description: Confiance du LLM entre 0 et 1 (null pour les sources non LLM).
 

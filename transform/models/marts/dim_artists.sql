@@ -22,6 +22,7 @@ select
     x.discogs_artist_id,
     x.wikidata_qid,
     d.profile                         as discogs_profile,
+    d.profile_clean                   as discogs_profile_clean,
     w.title                           as wikipedia_title,
     w.extract                         as wikipedia_text,
     q.depth                           as crawl_depth,

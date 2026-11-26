@@ -65,6 +65,10 @@ create table if not exists raw.llm_influence_claims (
     confidence     double,
     extracted_at   timestamp
 );
+-- Texte d'où vient la citation (discogs | wikipedia) et version de l'extracteur (prompt + filtres) :
+-- changer de version relance l'extraction ; dbt ne garde que le dernier passage par texte.
+alter table raw.llm_influence_claims add column if not exists text_source varchar;
+alter table raw.llm_influence_claims add column if not exists extractor_version varchar;
 """
 
 

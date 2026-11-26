@@ -48,6 +48,7 @@ resolution as (
 
 select
     cl.artist_mbid,
+    cl.text_source,
     cl.model,
     cl.other_artist,
     cl.other_artist_key,

@@ -2,14 +2,27 @@
 -- Chaque affirmation porte sa citation ; la vérification « la citation est dans la bio » est faite
 -- à l'extraction (validate_against_source) et revérifiée par le test assert_llm_evidence_in_bio.
 --
+-- text_source : texte d'où vient la citation (discogs = bio nettoyée de son balisage, wikipedia =
+-- article). Seules les affirmations de la version courante de l'extracteur sont gardées (variable
+-- llm_extractor_version), et pour chaque texte seul le dernier passage compte.
+--
 -- Si l'extraction n'a encore jamais tourné, la table brute n'existe pas : on renvoie un résultat
 -- vide du bon type plutôt que de faire échouer tout le build.
 {%- set src = source('raw', 'llm_influence_claims') %}
 {%- set src_exists = load_relation(src) is not none %}
 
 {% if src_exists %}
+with claims as (
+    select *, coalesce(text_source, 'discogs') as source_text_kind
+    from {{ src }}
+    where extractor_version = '{{ var("llm_extractor_version") }}'
+    -- dernier passage de l'extraction pour chaque (artiste, texte)
+    qualify extracted_at = max(extracted_at) over (partition by artist_mbid, coalesce(text_source, 'discogs'))
+)
+
 select
     artist_mbid,
+    source_text_kind                  as text_source,
     model,
     trim(other_artist)                as other_artist,
     {{ normalize_artist_name('other_artist') }} as other_artist_key,
@@ -17,13 +30,14 @@ select
     trim(evidence_quote)              as evidence_quote,
     confidence,
     extracted_at
-from {{ src }}
+from claims
 -- les lignes sans other_artist marquent seulement un artiste traité sans relation trouvée
 where other_artist is not null
   and trim(other_artist) <> ''
 {% else %}
 select
     cast(null as varchar)   as artist_mbid,
+    cast(null as varchar)   as text_source,
     cast(null as varchar)   as model,
     cast(null as varchar)   as other_artist,
     cast(null as varchar)   as other_artist_key,

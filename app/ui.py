@@ -9,7 +9,14 @@ import streamlit as st
 from lineage.explore import db as xdb
 
 SOURCE_COLORS = {"musicbrainz": "#4C78A8", "wikidata": "#54A24B", "llm": "#E45756"}
-SOURCE_LABELS = {"musicbrainz": "MusicBrainz", "wikidata": "Wikidata", "llm": "LLM (bio Discogs)"}
+SOURCE_LABELS = {"musicbrainz": "MusicBrainz", "wikidata": "Wikidata", "llm": "LLM"}
+TEXT_LABELS = {"discogs": "bio Discogs", "wikipedia": "Wikipédia"}
+
+
+def source_label(source_system: str, evidence_source: str | None = None) -> str:
+    """« MusicBrainz », « LLM (Wikipédia) »…"""
+    label = SOURCE_LABELS[source_system]
+    return f"{label} ({TEXT_LABELS.get(evidence_source, evidence_source)})" if evidence_source else label
 
 
 def db_path() -> Path:

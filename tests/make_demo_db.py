@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 from fake_api import DEMO_LLM_CLAIMS, FakeApi  # noqa: E402
 
 from lineage.crawl import Crawler  # noqa: E402
+from lineage.extract.run import EXTRACTOR_VERSION  # noqa: E402
 from lineage.store import RawStore  # noqa: E402
 
 
@@ -30,8 +31,13 @@ def make_demo_db(path: Path) -> None:
     crawler.label_max_releases, crawler.label_min_core_artists = 100, 2
     crawler.rescope(max_depth=2, apply=True)
     store.con.executemany(
-        "insert into raw.llm_influence_claims values (?, 'demo-fictif', ?, ?, ?, ?, ?)",
-        [(*claim, datetime(2026, 1, 1)) for claim in DEMO_LLM_CLAIMS],
+        """
+        insert into raw.llm_influence_claims
+            (artist_mbid, other_artist, relation, evidence_quote, confidence, text_source,
+             model, extracted_at, extractor_version)
+        values (?, ?, ?, ?, ?, ?, 'demo-fictif', ?, ?)
+        """,
+        [(*claim, datetime(2026, 1, 1), EXTRACTOR_VERSION) for claim in DEMO_LLM_CLAIMS],
     )
     store.close()
 

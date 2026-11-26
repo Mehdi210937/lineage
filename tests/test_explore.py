@@ -41,8 +41,11 @@ def test_neighborhood_has_artists_labels_and_sources(marts_db):
 def test_every_llm_link_carries_its_quote(marts_db):
     hood = artist_neighborhood(marts_db, A, hops=2)
     llm = [l for l in hood.links if l.source_system == "llm"]
-    assert len(llm) == 4
+    assert len(llm) == 3  # Old Drone Master (bio + Wikipédia, fusionnés), Crypt Sister, Far Away Band
     assert all(l.evidence and l.confidence is not None for l in llm)
+    assert {l.evidence_source for l in llm} <= {"discogs", "wikipedia"}
+    to_c = next(l for l in llm if l.target == C)
+    assert to_c.evidence_source == "wikipedia" and "main influence" in to_c.evidence
     far_away = next(l for l in llm if l.source == D)  # « influenced » est retourné : D influencé par A
     assert (far_away.target, far_away.edge_type) == (A, "influenced_by")
 
@@ -53,7 +56,7 @@ def test_neighborhood_filters(marts_db):
     assert LABEL not in only_mb.nodes
 
     confident = artist_neighborhood(marts_db, A, sources=("llm",), min_llm_confidence=0.75, include_labels=False)
-    assert {l.edge_type for l in confident.links} == {"influenced_by", "collaborated_with"}
+    assert {(l.source, l.target) for l in confident.links} == {(A, C)}  # 0.9 ; les autres sont à 0.6
 
 
 def test_two_hops_and_label_peers(marts_db):

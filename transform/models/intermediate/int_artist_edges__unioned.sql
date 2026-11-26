@@ -12,6 +12,7 @@ with mb as (
         relation_type as edge_type,
         'musicbrainz' as source_system,
         cast(null as varchar) as evidence,
+        cast(null as varchar) as evidence_source,
         cast(null as double) as confidence
     from {{ ref('stg_musicbrainz__relations') }}
     where target_type = 'artist'
@@ -24,6 +25,7 @@ wd as (
         'influenced_by' as edge_type,
         'wikidata' as source_system,
         'Wikidata P737 sur ' || i.subject_qid as evidence,
+        cast(null as varchar) as evidence_source,
         cast(null as double) as confidence
     from {{ ref('stg_wikidata__influences') }} i
     join {{ ref('int_artist_external_ids') }} x on x.wikidata_qid = i.subject_qid
@@ -39,6 +41,7 @@ llm as (
         case when relation = 'influenced' then 'influenced_by' else relation end      as edge_type,
         'llm' as source_system,
         evidence_quote as evidence,
+        text_source as evidence_source,
         confidence
     from {{ ref('int_llm_claims__resolved') }}
     where match_status = 'matched'
@@ -59,6 +62,7 @@ select
     source_system,
     -- plusieurs citations pour une même arête : on garde la plus sûre
     first(evidence order by confidence desc nulls last, evidence nulls last) as evidence,
+    first(evidence_source order by confidence desc nulls last, evidence nulls last) as evidence_source,
     max(confidence) as confidence
 from unioned
 where from_artist_mbid <> to_artist_mbid

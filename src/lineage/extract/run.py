@@ -1,85 +1,161 @@
-"""Phase 3 : extraction des influences depuis les bios Discogs avec un LLM local (Ollama).
+"""Extraction des influences avec un LLM local (Ollama), depuis deux textes par artiste :
+l'article Wikipédia (sections style / influences, puis introduction) et la bio Discogs nettoyée.
 
 Pré-requis : Ollama installé et le modèle téléchargé (`ollama pull qwen3:8b`),
 puis `dbt build` lancé au moins une fois pour que marts.dim_artists existe.
 
+    python -m lineage.extract.run              # tous les textes pas encore traités par cette version
     python -m lineage.extract.run --limit 20
+
+Seuls les artistes du périmètre sont traités. Chaque texte n'est traité qu'une fois par version de
+l'extracteur (EXTRACTOR_VERSION) : la changer relance tout, et dbt ne garde que le dernier passage.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import logging
+from collections import Counter
 from datetime import datetime, timezone
 
 import duckdb
 import httpx
 
 from lineage.config import get_settings
-from lineage.extract.schema import SYSTEM_PROMPT, ExtractionResult, validate_against_source
+from lineage.extract.schema import (
+    MB_IDENTITY_EDGE_TYPES,
+    SYSTEM_PROMPT,
+    ExtractionResult,
+    filter_claims,
+    normalize_name,
+)
+from lineage.extract.texts import wikipedia_passages
 from lineage.store import SCHEMA_SQL
 
 log = logging.getLogger("lineage.extract")
 
+EXTRACTOR_VERSION = "2"  # 2 : Wikipédia, bio nettoyée, citation courte, filtres genres / membres
+TEXT_LABELS = {"wikipedia": "Article Wikipédia", "discogs": "Biographie Discogs"}
 
-def extract(client: httpx.Client, url: str, model: str, artist_name: str, profile: str) -> ExtractionResult:
+
+def extract(client: httpx.Client, url: str, model: str, artist_name: str, text: str, kind: str) -> ExtractionResult:
     resp = client.post(
         f"{url}/api/chat",
         json={
             "model": model,
             "stream": False,
+            "think": False,                                   # qwen3 : réponse directe, plus rapide
             "format": ExtractionResult.model_json_schema(),  # sortie contrainte au schéma
             "options": {"temperature": 0},
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Artiste : {artist_name}\n\nBiographie :\n{profile}"},
+                {"role": "user", "content": f"Artiste : {artist_name}\n\n{TEXT_LABELS[kind]} :\n{text}"},
             ],
         },
-        timeout=180,
+        timeout=300,
     )
     resp.raise_for_status()
-    raw = ExtractionResult.model_validate_json(resp.json()["message"]["content"])
-    return validate_against_source(raw, profile)
+    return ExtractionResult.model_validate_json(resp.json()["message"]["content"])
+
+
+def texts_to_process(con: duckdb.DuckDBPyConnection, model: str, limit: int | None) -> list[tuple]:
+    """(mbid, nom, type de texte, texte envoyé) pas encore traités par cette version."""
+    rows = con.execute(
+        """
+        with texts as (
+            select artist_mbid, artist_name, crawl_depth, 'wikipedia' as kind, wikipedia_text as body
+            from marts.dim_artists where in_perimeter and wikipedia_text is not null
+            union all
+            select artist_mbid, artist_name, crawl_depth, 'discogs', discogs_profile_clean
+            from marts.dim_artists where in_perimeter and discogs_profile_clean is not null
+        )
+        select t.artist_mbid, t.artist_name, t.kind, t.body
+        from texts t
+        where not exists (
+            select 1 from raw.llm_influence_claims c
+            where c.artist_mbid = t.artist_mbid and c.model = ? and c.text_source = t.kind
+              and c.extractor_version = ?
+        )
+        order by t.crawl_depth nulls last, t.artist_name, t.kind desc
+        """,
+        [model, EXTRACTOR_VERSION],
+    ).fetchall()
+    out = [(m, n, k, wikipedia_passages(b) if k == "wikipedia" else b) for m, n, k, b in rows]
+    return out[:limit] if limit else out
+
+
+def known_context(con: duckdb.DuckDBPyConnection) -> tuple[set[str], dict[str, set[str]]]:
+    """Genres et tags connus (normalisés), et pour chaque artiste les noms de ses membres / alias /
+    collaborations MusicBrainz."""
+    genres = {
+        normalize_name(g)
+        for (g,) in con.execute(
+            "select distinct unnest(coalesce(genres, []) || coalesce(tags, [])) from marts.dim_artists"
+        ).fetchall()
+        if g
+    }
+    identity: dict[str, set[str]] = {}
+    for a, b, name_a, name_b in con.execute(
+        """
+        select from_artist_mbid, to_artist_mbid, from_artist_name, to_artist_name
+        from marts.edges_artists
+        where source_system = 'musicbrainz' and edge_type in (select unnest(?))
+        """,
+        [sorted(MB_IDENTITY_EDGE_TYPES)],
+    ).fetchall():
+        if name_b:
+            identity.setdefault(a, set()).add(normalize_name(name_b))
+        if name_a:
+            identity.setdefault(b, set()).add(normalize_name(name_a))
+    return genres, identity
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument("--limit", type=int, default=None, help="nombre max de textes à traiter")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
     s = get_settings()
     con = duckdb.connect(str(s.duckdb_path))
     con.execute(SCHEMA_SQL)
-    todo = con.execute(
-        """
-        select a.artist_mbid, a.artist_name, a.discogs_profile
-        from marts.dim_artists a
-        where a.discogs_profile is not null
-          and a.artist_mbid not in (select artist_mbid from raw.llm_influence_claims where model = ?)
-        order by a.crawl_depth
-        limit ?
-        """,
-        [s.ollama_model, args.limit],
-    ).fetchall()
+    todo = texts_to_process(con, s.ollama_model, args.limit)
+    genres, identity = known_context(con)
+    log.info("%s texte(s) à traiter avec %s (extracteur v%s)", len(todo), s.ollama_model, EXTRACTOR_VERSION)
 
+    total_kept, total_rejected = 0, Counter()
     with httpx.Client() as client:
-        for mbid, name, profile in todo:
+        for i, (mbid, name, kind, text) in enumerate(todo, 1):
             try:
-                result = extract(client, s.ollama_url, s.ollama_model, name, profile)
+                raw = extract(client, s.ollama_url, s.ollama_model, name, text, kind)
             except Exception:
-                log.exception("Échec de l'extraction pour %s", name)
+                log.exception("Échec de l'extraction pour %s (%s)", name, kind)
                 continue
+            result, rejected = filter_claims(raw, text, name, genres, identity.get(mbid, set()))
             now = datetime.now(timezone.utc).replace(tzinfo=None)
             rows = [
-                (mbid, s.ollama_model, c.other_artist, c.relation, c.evidence_quote, c.confidence, now)
+                (mbid, s.ollama_model, c.other_artist, c.relation, c.evidence_quote, c.confidence, now,
+                 kind, EXTRACTOR_VERSION)
                 for c in result.claims
             ]
-            # une ligne « vide » marque l'artiste comme traité même sans relation trouvée
-            rows = rows or [(mbid, s.ollama_model, None, None, None, None, now)]
-            con.executemany("insert into raw.llm_influence_claims values (?, ?, ?, ?, ?, ?, ?)", rows)
-            log.info("%s : %s relation(s)", name, len(result.claims))
-            log.debug(json.dumps(result.model_dump(), ensure_ascii=False))
+            # une ligne « vide » marque le texte comme traité même sans relation trouvée
+            rows = rows or [(mbid, s.ollama_model, None, None, None, None, now, kind, EXTRACTOR_VERSION)]
+            con.executemany(
+                """
+                insert into raw.llm_influence_claims
+                    (artist_mbid, model, other_artist, relation, evidence_quote, confidence, extracted_at,
+                     text_source, extractor_version)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            total_kept += len(result.claims)
+            total_rejected.update(rejected)
+            log.info("[%s/%s] %s (%s) : %s gardée(s), %s rejetée(s) %s", i, len(todo), name, kind,
+                     len(result.claims), sum(rejected.values()), dict(rejected) or "")
+            log.debug(json.dumps(raw.model_dump(), ensure_ascii=False))
+    log.info("Terminé : %s affirmation(s) gardée(s) ; rejets : %s", total_kept, dict(total_rejected))
     con.close()
 
 

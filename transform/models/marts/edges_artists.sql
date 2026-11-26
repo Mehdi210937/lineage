@@ -8,6 +8,7 @@ select
     e.edge_type,
     e.source_system,
     e.evidence,
+    e.evidence_source,
     e.confidence,
     (f.artist_mbid is not null and t.artist_mbid is not null) as in_scope
 from {{ ref('int_artist_edges__unioned') }} e

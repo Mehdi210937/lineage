@@ -17,17 +17,21 @@ from pydantic import BaseModel, Field
 
 from lineage.explore.db import EDGE_IN_PERIMETER, query
 from lineage.explore.graph import EDGE_LABELS
+from lineage.extract.texts import wikipedia_passages
 
 MAX_BIO_CHARS = 1500
+MAX_WIKIPEDIA_CHARS = 2500
 MAX_EDGES_PER_ARTIST = 15
 MAX_LABELS_PER_ARTIST = 8
 
 SOURCE_NAMES = {
     "musicbrainz": "MusicBrainz",
     "wikidata": "Wikidata",
-    "llm": "LLM (extrait de la bio Discogs)",
+    "llm": "LLM",
     "discogs": "Bio Discogs",
+    "wikipedia": "Wikipédia",
 }
+LLM_SOURCE_NAMES = {"discogs": "LLM (extrait de la bio Discogs)", "wikipedia": "LLM (extrait de Wikipédia)"}
 
 
 @dataclass(frozen=True)
@@ -90,8 +94,11 @@ def build_facts(db_path: Path | str, mbids: list[str], include_out: bool = False
             add(name, "MusicBrainz", f"Genres de {name} : {', '.join(a['genres'])}.")
         if a["tags"]:
             add(name, "MusicBrainz", f"Tags de {name} : {', '.join(a['tags'][:15])}.")
-        if a["discogs_profile"]:
-            bio = a["discogs_profile"]
+        if a["wikipedia_text"]:
+            passages = wikipedia_passages(a["wikipedia_text"], MAX_WIKIPEDIA_CHARS)
+            add(name, SOURCE_NAMES["wikipedia"], f"Article Wikipédia de {name} (style, influences, intro) : {passages}")
+        if a["discogs_profile_clean"]:
+            bio = a["discogs_profile_clean"]
             bio = bio if len(bio) <= MAX_BIO_CHARS else bio[:MAX_BIO_CHARS] + "…"
             add(name, SOURCE_NAMES["discogs"], f"Bio de {name} : {bio}")
 
@@ -112,7 +119,9 @@ def build_facts(db_path: Path | str, mbids: list[str], include_out: bool = False
             src = e["from_artist_name"] or e["from_artist_mbid"][:8]
             dst = e["to_artist_name"] or e["to_artist_mbid"][:8]
             citation = e["evidence"] if e["source_system"] == "llm" else None
-            add(name, SOURCE_NAMES[e["source_system"]], f"{src} {EDGE_LABELS.get(e['edge_type'], e['edge_type'])} {dst}.",
+            source = LLM_SOURCE_NAMES.get(e["evidence_source"], "LLM") if e["source_system"] == "llm" \
+                else SOURCE_NAMES[e["source_system"]]
+            add(name, source, f"{src} {EDGE_LABELS.get(e['edge_type'], e['edge_type'])} {dst}.",
                 citation)
 
         labels = query(

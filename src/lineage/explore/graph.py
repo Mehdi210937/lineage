@@ -39,6 +39,7 @@ class Link:
     source_system: str     # musicbrainz | wikidata | llm
     evidence: str | None
     confidence: float | None = None
+    evidence_source: str | None = None  # liens llm : discogs | wikipedia
 
     @property
     def label(self) -> str:
@@ -101,7 +102,7 @@ def artist_neighborhood(
             key = (r["from_artist_mbid"], r["to_artist_mbid"], r["edge_type"], r["source_system"])
             if key not in seen_links:
                 seen_links.add(key)
-                hood.links.append(Link(*key, r["evidence"], r["confidence"]))
+                hood.links.append(Link(*key, r["evidence"], r["confidence"], r["evidence_source"]))
         seen |= next_frontier
         frontier = next_frontier
 

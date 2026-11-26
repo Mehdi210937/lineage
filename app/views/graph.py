@@ -33,7 +33,7 @@ def render(hood: Neighborhood, dark: bool) -> str:
                          font={"color": fg, "size": 18 if n.is_center else 15})
     for e in hood.links:
         tooltip = [f"{hood.nodes[e.source].label} → {e.label} → {hood.nodes[e.target].label}",
-                   f"Source : {ui.SOURCE_LABELS[e.source_system]}"]
+                   f"Source : {ui.source_label(e.source_system, e.evidence_source)}"]
         if e.confidence is not None:
             tooltip.append(f"Confiance LLM : {e.confidence:.2f}")
         if e.evidence:
@@ -80,7 +80,8 @@ st.subheader("Liens et sources")
 names = {n.id: n.label for n in hood.nodes.values()}
 table = pd.DataFrame([{
     "De": names[e.source], "Relation": e.label, "Vers": names[e.target],
-    "Source": ui.SOURCE_LABELS[e.source_system], "Citation / justification": e.evidence or "—",
+    "Source": ui.source_label(e.source_system, e.evidence_source),
+    "Citation / justification": e.evidence or "—",
     "Confiance": e.confidence,
 } for e in hood.links])
 if table.empty:
