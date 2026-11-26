@@ -27,6 +27,18 @@ TEST_COVEN_BIO = (
     "Le titre Hex sample un vieux disque de Lady Midnight."
 )
 
+# Article Wikipédia fictif de Test Coven (texte brut avec sections, comme l'API TextExtracts).
+TEST_COVEN_WIKIPEDIA = """Test Coven is a fictional American witch house duo formed in 2008.
+
+== History ==
+The duo met in Traverse City and released the Hex EP on Crypt Records in 2010.
+
+== Musical style and influences ==
+Test Coven cite Old Drone Master as their main influence. Their slowed-down vocals are often compared to Crypt Sister. Reviewers also hear the minimal techno of Nobody Known.
+
+== Discography ==
+Hex EP (2010)"""
+
 # (artiste, autre artiste tel qu'écrit par le LLM, relation, citation, confiance)
 DEMO_LLM_CLAIMS = [
     (A, "Old Drone Master", "influenced_by",
@@ -189,6 +201,16 @@ class FakeApi:
         return {"discogs_artist_id": discogs_id, "releases": [
             {"id": 5001, "title": "Hex EP", "year": 2010, "type": "release", "role": "Main", "label": "Crypt Records"},
         ]}
+
+    def wikidata_sitelinks(self, qid):
+        self.calls.append(f"sitelinks:{qid}")
+        return {"qid": qid, "enwiki": "Test Coven (band)" if qid == "Q900001" else None}
+
+    def wikipedia_article(self, title):
+        self.calls.append(f"wikipedia:{title}")
+        if title != "Test Coven (band)":
+            return None
+        return {"title": title, "pageid": 4242, "extract": TEST_COVEN_WIKIPEDIA}
 
     def wikidata_influences(self, qid):
         self.calls.append(f"wikidata:{qid}")

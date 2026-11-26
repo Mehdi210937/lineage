@@ -26,6 +26,8 @@ MIN_INTERVAL = {
     "musicbrainz.org": 1.5,
     "api.discogs.com": 1.1,
     "query.wikidata.org": 1.0,
+    "www.wikidata.org": 1.0,
+    "en.wikipedia.org": 1.0,
 }
 DEFAULT_INTERVAL = 1.0
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}

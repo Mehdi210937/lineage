@@ -41,6 +41,14 @@ models:
       - name: discogs_artist_id
         data_tests: [unique, not_null]
 
+  - name: stg_wikipedia__articles
+    description: >
+      Article Wikipédia anglais d'un artiste (sitelink enwiki de son QID), en texte brut avec ses
+      sections « == Titre == ». Lu par l'extraction LLM, en priorité pour les influences.
+    columns:
+      - name: wikidata_qid
+        data_tests: [unique, not_null]
+
   - name: stg_wikidata__influences
     description: Relations P737 (influencé par) dans les deux sens.
     columns:

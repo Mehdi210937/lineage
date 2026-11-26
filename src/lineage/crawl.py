@@ -28,7 +28,7 @@ from typing import Protocol
 
 from lineage.config import Settings, get_settings
 from lineage.http import PoliteClient
-from lineage.sources import discogs, musicbrainz, wikidata
+from lineage.sources import discogs, musicbrainz, wikidata, wikipedia
 from lineage.store import LABEL_VIA_PREFIX, RawStore
 
 log = logging.getLogger("lineage.crawl")
@@ -42,6 +42,8 @@ class Api(Protocol):
     def discogs_artist(self, discogs_id: str) -> dict | None: ...
     def discogs_releases(self, discogs_id: str) -> dict: ...
     def wikidata_influences(self, qid: str) -> dict | None: ...
+    def wikidata_sitelinks(self, qid: str) -> dict | None: ...
+    def wikipedia_article(self, title: str) -> dict | None: ...
     @property
     def has_discogs(self) -> bool: ...
 
@@ -77,6 +79,12 @@ class LiveApi:
 
     def wikidata_influences(self, qid):
         return wikidata.get_influences(self.client, qid)
+
+    def wikidata_sitelinks(self, qid):
+        return wikipedia.get_sitelinks(self.client, qid)
+
+    def wikipedia_article(self, title):
+        return wikipedia.get_article(self.client, title)
 
 
 DEFAULT_LABEL_MAX_RELEASES = 100
@@ -162,6 +170,10 @@ class Crawler:
         influences = None
         if qid := ids.get("wikidata"):
             influences = self._cached("wikidata", "influences", qid, lambda: self.api.wikidata_influences(qid))
+            try:
+                self.fetch_wikipedia(qid)
+            except Exception as exc:  # texte facultatif : l'artiste reste traité, l'article sera rattrapé
+                self._failed(f"l'article Wikipédia de {artist.get('name', mbid)} ({qid})", exc)
 
         if not expand or depth >= max_depth:
             return 0
@@ -176,6 +188,30 @@ class Crawler:
             added += self.store.enqueue(n_mbid, n_name, depth + 1, mbid, f"wikidata:{direction}")
         self.store.set_relations_expanded(mbid)
         return added
+
+    def fetch_wikipedia(self, qid: str) -> dict | None:
+        """Article Wikipédia anglais de l'artiste (via le sitelink enwiki de son QID), mis en cache.
+        Stocké sous raw.api_responses (wikipedia, article, QID)."""
+        links = self._cached("wikidata", "sitelinks", qid, lambda: self.api.wikidata_sitelinks(qid))
+        title = (links or {}).get("enwiki")
+        if not title:
+            return None
+        return self._cached("wikipedia", "article", qid, lambda: self.api.wikipedia_article(title))
+
+    def catch_up_wikipedia(self) -> None:
+        """Télécharge l'article Wikipédia des artistes du périmètre crawlés avant cette source.
+        Une requête seulement pour ceux qui ne sont pas encore en cache."""
+        for row in self.store.queue_rows():
+            if row["status"] != "done" or (row["scope"] or "") == "out":
+                continue
+            artist = self.store.get("musicbrainz", "artist", row["mbid"])
+            qid = musicbrainz.external_ids(artist).get("wikidata") if artist else None
+            if not qid:
+                continue
+            try:
+                self.fetch_wikipedia(qid)
+            except Exception as exc:  # pas mis en cache : réessayé au prochain run
+                self._failed(f"l'article Wikipédia de {row['name']} ({qid})", exc)
 
     # --- rattrapage quand on augmente --depth ---------------------------
     def catch_up(self, max_depth: int) -> None:
@@ -335,6 +371,7 @@ class Crawler:
         if retried := self.store.requeue_errors():
             log.info("%s artiste(s) en erreur au run précédent remis en attente", retried)
         self.catch_up(max_depth)
+        self.catch_up_wikipedia()
         self.expand_core_labels(max_depth)
         processed = 0
         labels_stale = False  # de nouveaux artistes du noyau ont pu rendre des labels « partagés »

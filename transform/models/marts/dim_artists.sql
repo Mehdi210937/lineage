@@ -1,4 +1,4 @@
--- Un artiste par ligne, enrichi de ses identifiants externes, de sa bio Discogs
+-- Un artiste par ligne, enrichi de ses identifiants externes, de sa bio Discogs, de son article Wikipédia
 -- et de sa position dans le crawl.
 --
 -- perimeter (voir python -m lineage.crawl --rescope) :
@@ -22,6 +22,8 @@ select
     x.discogs_artist_id,
     x.wikidata_qid,
     d.profile                         as discogs_profile,
+    w.title                           as wikipedia_title,
+    w.extract                         as wikipedia_text,
     q.depth                           as crawl_depth,
     q.discovered_via,
     coalesce(
@@ -35,5 +37,6 @@ select
 from {{ ref('stg_musicbrainz__artists') }} a
 left join {{ ref('int_artist_external_ids') }} x using (artist_mbid)
 left join {{ ref('stg_discogs__artists') }} d on d.discogs_artist_id = x.discogs_artist_id
+left join {{ ref('stg_wikipedia__articles') }} w on w.wikidata_qid = x.wikidata_qid
 left join {{ source('raw', 'crawl_queue') }} q on q.mbid = a.artist_mbid
 left join seeds s on s.mbid = a.artist_mbid
