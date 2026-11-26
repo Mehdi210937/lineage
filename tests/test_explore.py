@@ -10,7 +10,7 @@ from fake_api import A, B, BIG_LABEL, C, D, E, F, G, HOLLOW, LABEL
 
 from lineage.explore import coach
 from lineage.explore.db import resolve_db_path
-from lineage.explore.graph import artist_neighborhood
+from lineage.explore.graph import CATEGORIES, artist_neighborhood, drawn_edges, edge_category, short_name
 from lineage.explore.labels import Weights, rank_labels
 
 # --- base -------------------------------------------------------------------
@@ -28,7 +28,7 @@ def test_db_path_from_argv_then_env(monkeypatch):
 
 
 def test_neighborhood_has_artists_labels_and_sources(marts_db):
-    hood = artist_neighborhood(marts_db, A, hops=1, label_peers=0)
+    hood = artist_neighborhood(marts_db, A, hops=1, categories=tuple(CATEGORIES))
     assert hood.nodes[A].is_center
     assert {B, C, D, E, LABEL, BIG_LABEL} <= set(hood.nodes)
     assert hood.nodes[LABEL].kind == "label"
@@ -51,22 +51,25 @@ def test_every_llm_link_carries_its_quote(marts_db):
 
 
 def test_neighborhood_filters(marts_db):
-    only_mb = artist_neighborhood(marts_db, A, sources=("musicbrainz",), include_labels=False)
+    only_mb = artist_neighborhood(marts_db, A, sources=("musicbrainz",))
     assert {l.source_system for l in only_mb.links} == {"musicbrainz"}
-    assert LABEL not in only_mb.nodes
+    assert LABEL not in only_mb.nodes  # labels masqués par défaut
 
-    confident = artist_neighborhood(marts_db, A, sources=("llm",), min_llm_confidence=0.75, include_labels=False)
+    confident = artist_neighborhood(marts_db, A, sources=("llm",), min_llm_confidence=0.75)
     assert {(l.source, l.target) for l in confident.links} == {(A, C)}  # 0.9 ; les autres sont à 0.6
 
 
 def test_two_hops_and_label_peers(marts_db):
-    one = artist_neighborhood(marts_db, C, hops=1, include_labels=False)
-    two = artist_neighborhood(marts_db, C, hops=2, include_labels=False)
+    one = artist_neighborhood(marts_db, C, hops=1)
+    two = artist_neighborhood(marts_db, C, hops=2)
     assert set(one.nodes) == {C, A}
     assert {B, D, E} <= set(two.nodes)
 
-    peers = artist_neighborhood(marts_db, E, hops=1, sources=(), label_peers=10)
-    assert {LABEL, HOLLOW, A, B, D} <= set(peers.nodes)  # artistes de ses labels
+    labels_only = artist_neighborhood(marts_db, E, hops=1, sources=(), categories=("labels",))
+    assert set(labels_only.nodes) == {E, LABEL, HOLLOW}  # un saut : ses labels, pas leurs artistes
+    peers = artist_neighborhood(marts_db, E, hops=2, sources=(), categories=("labels",))
+    assert {LABEL, HOLLOW, A, B, D} <= set(peers.nodes)  # deuxième saut : les artistes de ses labels
+    assert {peers.nodes[n].hop for n in (A, B, D)} == {2}
     assert G not in peers.nodes  # E vient d'un label : Hollow Tapes n'a pas été exploré
 
 
@@ -78,14 +81,49 @@ def test_out_of_perimeter_artists_are_hidden_by_default(marts_db):
     assert F not in {a["artist_mbid"] for a in list_artists(marts_db)}
     assert F in {a["artist_mbid"] for a in list_artists(marts_db, include_out=True)}
 
-    hidden = artist_neighborhood(marts_db, A, label_peers=10)
-    shown = artist_neighborhood(marts_db, A, label_peers=10, include_out=True)
+    every = tuple(CATEGORIES)
+    hidden = artist_neighborhood(marts_db, A, hops=2, categories=every)
+    shown = artist_neighborhood(marts_db, A, hops=2, categories=every, include_out=True)
     assert BIG_LABEL in hidden.nodes and F not in hidden.nodes
     assert F in shown.nodes
 
     mega = lambda rows: next(r for r in rows if r["label_name"] == "Mega Major")  # noqa: E731
     assert mega(rank_labels(marts_db, [A], current_year=2026, include_out=True))["n_artists_in_scope"] == 2
     assert "Pop Star" not in str(coach.build_facts(marts_db, [A]))
+
+
+def test_category_filters(marts_db):
+    members = artist_neighborhood(marts_db, A, categories=("members",))
+    assert members.links and {l.category for l in members.links} == {"members"}
+    assert C not in members.nodes  # Old Drone Master n'est relié à A que par des influences
+    influences = artist_neighborhood(marts_db, A, categories=("influences",))
+    assert C in influences.nodes and {l.category for l in influences.links} == {"influences"}
+    assert edge_category("member of band") == edge_category("sibling") == "members"
+    assert edge_category("sampled") == "remix" and edge_category("on_label") == "labels"
+
+
+def test_limit_keeps_the_most_important_neighbors(marts_db):
+    everything = artist_neighborhood(marts_db, A, limit=None)
+    top = artist_neighborhood(marts_db, A, limit=1)
+    n_artists = sum(n.kind == "artist" for n in everything.nodes.values()) - 1
+    assert set(top.nodes) == {A, C}  # influence affirmée par Wikidata et par le LLM : 2 × 3 points
+    assert top.hidden == n_artists - 1 > 0
+    assert everything.hidden == 0
+
+
+def test_links_of_a_pair_are_drawn_as_one_edge(marts_db):
+    hood = artist_neighborhood(marts_db, A)
+    edges = {frozenset((e.source, e.target)): e for e in drawn_edges(hood)}
+    to_c = edges[frozenset((A, C))]
+    assert {l.source_system for l in to_c.links} == {"wikidata", "llm"}
+    assert to_c.category == "influences" and not to_c.llm_only and to_c.arrows == "to"
+    assert len(edges) == len({frozenset((l.source, l.target)) for l in hood.links})
+
+
+def test_short_name():
+    assert short_name("oOoOO") == "oOoOO"
+    assert short_name("Orchestral Manoeuvres in the Dark") == "Orchestral Mano…"
+    assert len(short_name("Orchestral Manoeuvres in the Dark")) == 16
 
 
 # --- labels -----------------------------------------------------------------

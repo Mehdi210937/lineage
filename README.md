@@ -104,11 +104,22 @@ profondeur max ajoutent leurs voisins à partir du cache, et les labels partagé
 marts, en lecture seule, et referme la connexion après chaque requête : on peut la laisser ouverte
 pendant un `dbt build`. Si un crawl tient le verrou de la base, l'app le dit et propose la démo.
 
-**Graphe.** On cherche un artiste et on voit ses voisins à 1 ou 2 sauts : influences, membres,
-collaborations, labels et autres artistes de ces labels. Chaque lien affiche sa source au survol et dans
-le tableau en dessous ; les liens extraits par le LLM sont en pointillés et citent le passage de
-l'article Wikipédia ou de la bio Discogs d'où ils viennent. Filtres par source et par confiance du LLM.
-Un interrupteur de la barre latérale affiche aussi les artistes hors périmètre.
+**Graphe.** On cherche un artiste et on voit ses voisins directs ; le 2e saut (voisins des voisins,
+et autres artistes de ses labels) est en option. Pour rester lisible :
+
+- des cases par type de lien : influences, membres et proches, remix/split/collab, labels (masqués
+  par défaut) ;
+- au plus 15 voisins par saut (15 artistes et 15 labels), les plus importants d'abord : chaque lien
+  avec un nœud affiché compte (influence 3 points, membre ou remix 2, label 1), puis les artistes
+  crawlés, puis les plus reliés dans tout le graphe ; un bouton « Voir plus » en ajoute 15 ;
+- des noms courts sur les nœuds ; nom complet, relations, source et citation au survol ;
+- un seul trait par paire d'artistes (les liens de plusieurs sources sont fusionnés), coloré par type
+  de lien, en pointillés s'il vient seulement du LLM ; une légende sous le graphe ;
+- une disposition calculée une fois puis figée : les nœuds ne bougent que si on les tire.
+
+Le tableau en dessous reprend chaque lien affiché avec sa source et sa citation (passage de l'article
+Wikipédia ou de la bio Discogs pour les liens du LLM). Filtres par source et par confiance du LLM ;
+un interrupteur de la barre latérale affiche aussi les artistes hors périmètre.
 
 ![Page Graphe](docs/img/graph.png)
 

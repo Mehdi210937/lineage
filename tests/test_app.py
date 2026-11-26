@@ -27,6 +27,25 @@ def test_graph_page(app):
     assert app.title[0].value == "Graphe de la scène"
     assert app.selectbox(key="graph_artist").value == A  # la seed est proposée en premier
     assert len(app.dataframe) == 1
+    # lisible par défaut : un saut, labels masqués
+    assert app.toggle(key="graph_hop2").value is False
+    assert app.checkbox(key="graph_cat_labels").value is False
+    assert app.checkbox(key="graph_cat_influences").value is True
+    assert "Labels" not in set(app.dataframe[0].value["Type"])
+    app.checkbox(key="graph_cat_labels").check().run()
+    assert not app.exception
+    assert "Labels" in set(app.dataframe[0].value["Type"])
+
+
+def test_graph_page_see_more(app):
+    app.session_state["graph_limit"] = 1
+    app.run()
+    assert not app.exception
+    assert len(app.dataframe[0].value) == 2  # un seul voisin (Old Drone Master), deux sources
+    app.button(key="graph_more").click().run()
+    assert not app.exception
+    assert app.session_state["graph_limit"] == 16
+    assert len(app.dataframe[0].value) > 2
 
 
 def test_labels_page(app):
