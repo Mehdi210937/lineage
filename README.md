@@ -4,7 +4,8 @@
 
 Lineage reconstruit le graphe de la scène **witch house** et de ses voisins (Crystal Castles, Salem,
 Snow Strippers, Crim3s…) à partir de données ouvertes. Un LLM extrait les influences enfouies dans les
-biographies, et un agent s'appuie sur ce graphe pour donner des **conseils de production** sourcés.
+articles Wikipédia et les biographies Discogs, et un agent s'appuie sur ce graphe pour donner des
+**conseils de production** sourcés.
 
 Projet portfolio d'analytics engineering : ingestion, modélisation dbt, qualité des données, LLM et agent.
 
@@ -14,11 +15,12 @@ Projet portfolio d'analytics engineering : ingestion, modélisation dbt, qualit�
 flowchart LR
     S[seeds/seed_artists.csv] --> C
     subgraph Ingestion [Python]
-        C[Crawler BFS<br/>relations + labels de niche<br/>débit limité, cache, reprise]
+        C[Crawler BFS<br/>noyau + labels de la scène<br/>débit limité, cache, reprise]
     end
     MB[(MusicBrainz API)] --> C
     DG[(Discogs API)] --> C
-    WD[(Wikidata SPARQL)] --> C
+    WD[(Wikidata SPARQL + API)] --> C
+    WP[(Wikipédia API)] --> C
     C --> R[(DuckDB<br/>raw.api_responses)]
     R --> STG[dbt staging] --> INT[dbt intermediate<br/>résolution d'identifiants,<br/>rapprochement des noms LLM] --> M[dbt marts<br/>dim_artists, edges_artists,<br/>bridge_artist_labels, dim_labels,<br/>fct_artist_releases, llm_claims_to_review]
     M --> L[LLM local<br/>extraction d'influences]
@@ -46,12 +48,12 @@ cd transform; dbt build --profiles-dir . --target demo; cd ..
 # 4. Lancer l'app sur la démo (http://localhost:8501)
 streamlit run app/main.py -- --db data/demo.duckdb
 
-# 5. Le vrai crawl (quelques heures : MusicBrainz limite à ~1 requête/s)
-python -m lineage.crawl --depth 2 --max-artists 400 --label-max-releases 300
+# 5. Le vrai crawl (MusicBrainz : une requête toutes les 1,5 s)
+python -m lineage.crawl --depth 2 --max-artists 400
 
 # 6. Modélisation, extraction LLM des influences, puis modélisation à nouveau
 cd transform; dbt build --profiles-dir .; cd ..
-python -m lineage.extract.run --limit 50
+python -m lineage.extract.run
 cd transform; dbt build --profiles-dir .; cd ..
 
 # 7. L'app sur les vraies données (data/lineage.duckdb par défaut)
@@ -71,12 +73,29 @@ MusicBrainz part au plus toutes les 1,5 s. Si un artiste ou un label échoue mal
 journalisée et l'élément est repris au run suivant : les artistes en `error` repassent en attente, et
 les labels d'un artiste ne sont marqués explorés que si tous ont répondu.
 
-Les voisins d'un artiste sont ses relations MusicBrainz (membres, alias, collaborations), ses
-influences Wikidata **et les autres artistes de ses labels de niche** : seuls les labels ayant au plus
-`--label-max-releases` sorties au total sont explorés (300 par défaut, `0` désactive l'expansion).
-On peut **augmenter `--depth` d'un run à l'autre** : au début de chaque run, les artistes déjà traités
-qui étaient à l'ancienne profondeur max ajoutent leurs voisins (relations MusicBrainz, influences
-Wikidata, labels de niche) à partir du cache ; seules les requêtes sur les labels sont nouvelles.
+### Périmètre du crawl
+
+Une scène de niche se perd vite : au premier crawl en profondeur 2, chaque label (jusqu'à 300 sorties)
+de chaque artiste faisait entrer tous ses artistes, eux-mêmes étendus à leur tour. Résultat : **7 142
+artistes en attente**, avec Leona Lewis, Afrojack ou Status Quo. Le périmètre est maintenant défini ainsi :
+
+- **le noyau** : les artistes de départ, et ceux qui leur sont reliés par MusicBrainz (membres, alias,
+  collaborations) ou Wikidata (influences), jusqu'à `--depth` sauts. Seuls eux sont étendus ;
+- **les labels de la scène** : au plus `--label-max-releases` sorties (100 par défaut) **et** partagés
+  par au moins `--label-min-core-artists` artistes du noyau (2 par défaut). Leurs artistes sont crawlés
+  (fiche, sorties, bio, article) mais jamais étendus ;
+- **hors périmètre** : le reste. Rien n'est supprimé : `python -m lineage.crawl --depth 2 --rescope`
+  recalcule le périmètre depuis le cache et affiche le bilan, `--apply` l'écrit. Les artistes en
+  attente hors périmètre passent en `out_of_scope` (réversible), ceux déjà crawlés restent en base avec
+  `dim_artists.perimeter = 'out'`, et l'app les masque par défaut.
+
+Compter les artistes du **noyau**, et pas tous les artistes déjà crawlés, est ce qui fait la différence :
+la moitié des artistes crawlés venaient déjà de labels hors sujet, et comptés tels quels ils faisaient
+passer des labels comme Inertia (Robyn, Röyksopp). Avec le noyau, il reste exactement 4 labels :
+Disaro, Merok Records, Emotion et Lovepump United, et la file passe de 7 142 à 49 artistes en attente.
+
+On peut **augmenter `--depth` d'un run à l'autre** : les artistes du noyau qui étaient à l'ancienne
+profondeur max ajoutent leurs voisins à partir du cache, et les labels partagés sont recalculés.
 
 ## L'app
 
@@ -87,8 +106,9 @@ pendant un `dbt build`. Si un crawl tient le verrou de la base, l'app le dit et 
 
 **Graphe.** On cherche un artiste et on voit ses voisins à 1 ou 2 sauts : influences, membres,
 collaborations, labels et autres artistes de ces labels. Chaque lien affiche sa source au survol et dans
-le tableau en dessous ; les liens extraits par le LLM sont en pointillés et citent la phrase de la bio.
-Filtres par source et par confiance du LLM.
+le tableau en dessous ; les liens extraits par le LLM sont en pointillés et citent le passage de
+l'article Wikipédia ou de la bio Discogs d'où ils viennent. Filtres par source et par confiance du LLM.
+Un interrupteur de la barre latérale affiche aussi les artistes hors périmètre.
 
 ![Page Graphe](docs/img/graph.png)
 
@@ -102,8 +122,8 @@ Le tableau indique quels artistes partagés justifient chaque label.
 
 ![Page Labels](docs/img/labels.png)
 
-**Coach.** On choisit des inspirations ; l'app transforme leurs données (identité, genres, tags, bio
-Discogs, arêtes du graphe avec citations, labels) en faits numérotés `S1, S2…`, seul contexte donné à
+**Coach.** On choisit des inspirations ; l'app transforme leurs données (identité, genres, tags,
+passages Wikipédia sur le style, bio Discogs, arêtes du graphe avec citations, labels) en faits numérotés `S1, S2…`, seul contexte donné à
 qwen3:8b. La réponse est contrainte en JSON : chaque conseil liste les faits qui le justifient, et un
 conseil sans source ou citant un fait inexistant est écarté et montré à part.
 
@@ -121,14 +141,15 @@ nom d'Old Drone Master. Le jeu d'évaluation de la feuille de route devra mesure
 | staging | `stg_musicbrainz__artists` | un artiste |
 | staging | `stg_musicbrainz__relations` | une relation artiste → artiste / label / URL |
 | staging | `stg_musicbrainz__release_labels` | un couple (sortie, label), `[no label]` signalé par `is_placeholder_label` |
-| staging | `stg_discogs__artists` | une fiche Discogs avec sa bio |
+| staging | `stg_discogs__artists` | une fiche Discogs avec sa bio, brute et nettoyée de son balisage |
+| staging | `stg_wikipedia__articles` | un article Wikipédia anglais en texte brut, sections comprises |
 | staging | `stg_wikidata__influences` | une relation P737 « influencé par » |
 | staging | `stg_musicbrainz__labels` | un label exploré par le crawler, avec son nombre total de sorties |
-| staging | `stg_llm__influence_claims` | une affirmation du LLM avec sa citation (vide si l'extraction n'a jamais tourné) |
+| staging | `stg_llm__influence_claims` | une affirmation du LLM avec sa citation et son texte source (version courante de l'extracteur) |
 | intermediate | `int_artist_external_ids` | correspondance MBID ↔ Discogs ↔ Wikidata |
 | intermediate | `int_llm_claims__resolved` | une affirmation du LLM, l'autre artiste rapproché d'un MBID (`matched` / `ambiguous` / `no_match`) |
 | intermediate | `int_artist_edges__unioned` | arêtes orientées et dédoublonnées, toutes sources (MusicBrainz, Wikidata, LLM) |
-| marts | `dim_artists`, `dim_labels` | un artiste, un label (`n_releases_total` = taille réelle) |
+| marts | `dim_artists`, `dim_labels` | un artiste (textes, `perimeter`), un label (`n_releases_total` = taille réelle) |
 | marts | `edges_artists` | une arête du graphe, avec sa source, sa justification et la confiance du LLM |
 | marts | `llm_claims_to_review` | une affirmation du LLM non rapprochée, à revoir à la main |
 | marts | `bridge_artist_labels` | artiste × label, avec la période d'activité (vrais labels uniquement) |
@@ -149,6 +170,63 @@ Premier crawl : profondeur 1, 24 artistes.
   convention MusicBrainz pour l'autoproduction, pas un label : il est maintenant exclu des marts de
   labels et converti en indicateur au niveau des sorties.
 
+## Les textes du LLM : Discogs n'a pas d'influences, Wikipédia si
+
+La première extraction lisait seulement les bios Discogs : **35 bios, 5 affirmations**, et aucune
+vraie influence. Les bios font 300 caractères en moyenne et donnent des faits d'état civil
+(« US band from Traverse City and Chicago, founded 2006 » pour SALEM). Le peu de relations trouvées
+étaient des membres déjà connus par MusicBrainz, ou des genres pris pour des artistes (« soul »,
+« Basque folk music »). Le balisage Discogs (`[a=Crystal Castles]`, `[a1069428]`) polluait en plus
+les citations.
+
+D'où quatre changements :
+
+- **Wikipédia comme source principale.** Le QID Wikidata (fourni par MusicBrainz) donne le titre de
+  l'article anglais (sitelink `enwiki`), et l'API MediaWiki le texte brut avec ses sections. Les
+  articles d'artistes ont souvent une section « Musical style and influences » : elle est lue en
+  premier, puis l'introduction, puis le reste de l'article (sans discographie, références…), découpé
+  en morceaux de 3 000 caractères (6 au plus). Débit d'une requête par seconde et User-Agent avec
+  contact, selon la politique Wikimedia.
+- **Bios Discogs nettoyées par dbt** (macro `clean_discogs_markup`, testée) : Python envoie au LLM le
+  texte nettoyé, et dbt y revérifie la citation, avec une seule implémentation du nettoyage.
+- **Des numéros de phrases au lieu de citations recopiées.** Le texte est envoyé en phrases numérotées
+  et le LLM renvoie le numéro de la phrase qui justifie chaque relation ; la citation stockée est la
+  phrase originale, et le code vérifie que l'artiste nommé y figure. Avec des citations recopiées,
+  qwen3:8b réécrivait le texte : « …shared bills with many bands including Suicide, Ruins, Arab on
+  Radar… » devenait une phrase inventée par groupe, toutes rejetées. Normaliser apostrophes et tirets
+  n'en aurait sauvé aucune : ce n'était pas de la typographie mais de la reformulation.
+- **Des filtres faits par le code, pas seulement par le prompt.** qwen3:8b ignore une partie des
+  consignes ; le code écarte donc les genres, courants, lieux, labels et œuvres pris pour des artistes,
+  toute relation avec un membre ou un alias déjà connu par MusicBrainz, et les « collaborations » qui
+  ne sont qu'une affiche, une tournée ou un festival partagés. Chaque affirmation garde son texte
+  source (`text_source`) ; dbt ne garde que la version courante de l'extracteur (variable
+  `llm_extractor_version`, aujourd'hui 3) et revérifie chaque citation dans son texte.
+
+**Résultat sur le vrai crawl** (88 artistes du périmètre, 33 articles Wikipédia, 55 bios Discogs) :
+
+| | Discogs seul (v1) | Wikipédia + Discogs (v3) |
+|---|---|---|
+| affirmations gardées | 5 | 208 (205 de Wikipédia, 3 de Discogs) |
+| artistes avec au moins une affirmation | 4 | 29 via Wikipédia, 3 via Discogs |
+| arêtes `llm` dans le graphe | 2 | 21, dont 18 entre deux artistes crawlés |
+| rejets par les filtres | – | 109 (39 affiches ou tournées, 27 doublons, 20 artiste absent de la phrase, 13 membres ou alias, 9 genres ou labels, 1 l'artiste lui-même) |
+
+Ce que montre une lecture à la main :
+
+- **Les vraies influences sont là, mais hors du graphe.** « Musical influences included Kraftwerk,
+  New Order, Orchestral Manoeuvres in the Dark, Pet Shop Boys and Yello » (Crystal Castles), « Chris
+  Dexter has listed Jana Hunter and Matteah Baim as influences » (oOoOO), « Sade's music and fashion
+  sense are a big influence for Greene » (Washed Out). Les influences pointent par nature hors de la
+  scène crawlée : 187 affirmations sur 208 attendent dans `llm_claims_to_review`, faute de MBID.
+- **Le type de relation reste le point faible.** Sur les influences et comparaisons, environ 6 sur 10
+  sont justes. Les erreurs typiques : un ancien membre (« her work with Dirty Projectors as full-time
+  member ») ou un remix (« The EP includes remixes from both Zola Jesus and Pictureplane ») classés en
+  influence, un média pris pour un artiste (« According to Heather Phares of AllMusic »). Les listes
+  de remixes (« "Crimewave" [by Crystal Castles] (2010) ») sortent en `sampled` : le lien est réel,
+  mais c'est un remix, que le schéma ne sait pas encore nommer.
+- **Discogs ne sert presque à rien pour les influences** (3 affirmations sur 55 bios) ; il reste utile
+  pour les labels et les sorties.
+
 ## Choix de conception
 
 - **Crawl par API plutôt que dumps complets.** La scène est une niche : télécharger des dizaines de Go
@@ -160,9 +238,10 @@ Premier crawl : profondeur 1, 24 artistes.
   résolution d'entités est exacte quand le lien existe, au lieu d'un rapprochement flou sur les noms.
 - **Traçabilité de chaque arête.** `edges_artists.source_system` dit d'où vient chaque affirmation. Une
   arête produite par le LLM sans citation fait échouer les tests (`assert_llm_edges_have_evidence`).
-- **Les labels de niche comme arêtes de scène, avec un seuil.** Partager un label de 50 sorties dit
+- **Les labels de la scène comme arêtes, avec un seuil.** Partager un label de 50 sorties dit
   quelque chose ; partager Polydor, Fiction ou [PIAS] ne dit rien et ferait exploser le crawl. Un label
-  n'est exploré que s'il a au plus N sorties au total (`--label-max-releases`, 300 par défaut). La
+  n'est exploré que s'il a au plus N sorties au total (`--label-max-releases`, 100 par défaut) et qu'il
+  est partagé par au moins 2 artistes du noyau (voir « Périmètre du crawl »). La
   première page de l'API donne ce total : un gros label ne coûte qu'une requête, et son payload est
   stocké tronqué (`complete: false`). Si on relève le seuil plus tard, il est re-téléchargé. Les
   artistes découverts ainsi gardent leur provenance (`discovered_via = musicbrainz:label:<nom>`) et
@@ -173,8 +252,9 @@ Premier crawl : profondeur 1, 24 artistes.
   indique explicitement `[no label]`, `false` s'il y a un vrai label, et `null` s'il n'y a aucune info
   de label : une donnée manquante n'est pas une autoproduction. Le test `assert_no_placeholder_labels`
   garantit que `[no label]` ne revient pas dans `dim_labels` ni `bridge_artist_labels`.
-- **Le LLM ne peut pas inventer.** Toute influence extraite doit citer une phrase présente mot pour mot
-  dans la bio source ; sinon elle est rejetée (`validate_against_source`). dbt le revérifie
+- **Le LLM ne peut pas inventer.** Toute influence extraite doit citer un passage présent mot pour mot
+  dans le texte source (article Wikipédia ou bio nettoyée) ; sinon elle est rejetée
+  (`validate_against_source`). dbt le revérifie dans le texte d'où elle vient
   (`assert_llm_evidence_in_bio`) et exige une citation sur chaque arête `llm`
   (`assert_llm_edges_have_evidence`).
 - **Rapprocher les noms du LLM sans deviner.** Le LLM écrit un nom (« The Crypt-Sister »), le graphe
@@ -194,10 +274,14 @@ Premier crawl : profondeur 1, 24 artistes.
 
 - [x] Crawler multi-sources avec débit limité, cache et reprise
 - [x] Modèles dbt staging → marts et tests de qualité
-- [x] Expansion du crawl par labels de niche (seuil de sorties configurable)
+- [x] Expansion du crawl par labels de la scène (seuil de sorties, partage par le noyau, `--rescope`)
+- [x] Wikipédia comme source de texte pour l'extraction
 - [ ] Mesurer la couverture de la scène dans chaque source (notebook de profilage ; premiers constats ci-dessus)
 - [x] Modèle dbt des arêtes `llm` : rapprochement des noms, revue des noms non rapprochés
-- [ ] Lancer l'extraction LLM (`python -m lineage.extract.run`) sur le vrai crawl et revoir `llm_claims_to_review`
+- [x] Lancer l'extraction LLM sur le vrai crawl (bilan ci-dessus)
+- [ ] Résoudre les influences hors du crawl (recherche MusicBrainz du nom) pour les faire entrer dans le graphe
+- [ ] Ajouter la relation `remixed` et resserrer `influenced_by` (membres, producteurs, remixes)
+- [ ] Revoir `llm_claims_to_review` à la main
 - [ ] Jeu d'évaluation : 50 influences vérifiées à la main, précision mesurée en CI
 - [ ] Fiches de style (attributs de production par artiste), validées à la main
 - [ ] Analyse audio (Essentia / librosa) : comparer un morceau à ses références
@@ -209,5 +293,6 @@ Premier crawl : profondeur 1, 24 artistes.
 - [MusicBrainz](https://musicbrainz.org/doc/MusicBrainz_API) : données principales sous CC0.
 - [Discogs API](https://www.discogs.com/developers) : soumise aux conditions d'utilisation de l'API.
 - [Wikidata](https://query.wikidata.org/) : CC0.
+- [Wikipédia](https://en.wikipedia.org/) : textes sous CC BY-SA 4.0, utilisés en local pour l'extraction.
 
 Les données téléchargées restent en local (`data/` est ignoré par git) : le dépôt ne publie que le code.
