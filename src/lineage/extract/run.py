@@ -1,5 +1,7 @@
 """Extraction des influences avec un LLM local (Ollama), depuis deux textes par artiste :
-l'article Wikipédia (sections style / influences, puis introduction) et la bio Discogs nettoyée.
+l'article Wikipédia (en entier, style et influences d'abord, découpé en morceaux) et la bio Discogs
+nettoyée. Chaque morceau est envoyé en phrases numérotées : le LLM renvoie des numéros de phrases,
+et la citation stockée est la phrase originale.
 
 Pré-requis : Ollama installé et le modèle téléchargé (`ollama pull qwen3:8b`),
 puis `dbt build` lancé au moins une fois pour que marts.dim_artists existe.
@@ -26,40 +28,59 @@ from lineage.extract.schema import (
     MB_IDENTITY_EDGE_TYPES,
     SYSTEM_PROMPT,
     ExtractionResult,
+    LLMResult,
     filter_claims,
     normalize_name,
+    resolve_sentences,
 )
-from lineage.extract.texts import wikipedia_passages
+from lineage.extract.texts import numbered, text_chunks
 from lineage.store import SCHEMA_SQL
 
 log = logging.getLogger("lineage.extract")
 
-EXTRACTOR_VERSION = "2"  # 2 : Wikipédia, bio nettoyée, citation courte, filtres genres / membres
+# 2 : Wikipédia, bio nettoyée, filtres genres / membres
+# 3 : article Wikipédia en entier (par morceaux), numéros de phrases au lieu de citations recopiées
+EXTRACTOR_VERSION = "3"
 TEXT_LABELS = {"wikipedia": "Article Wikipédia", "discogs": "Biographie Discogs"}
 
 
-def extract(client: httpx.Client, url: str, model: str, artist_name: str, text: str, kind: str) -> ExtractionResult:
+def ask_llm(client: httpx.Client, url: str, model: str, artist_name: str, numbered_text: str, kind: str) -> LLMResult:
     resp = client.post(
         f"{url}/api/chat",
         json={
             "model": model,
             "stream": False,
             "think": False,                                   # qwen3 : réponse directe, plus rapide
-            "format": ExtractionResult.model_json_schema(),  # sortie contrainte au schéma
+            "format": LLMResult.model_json_schema(),         # sortie contrainte au schéma
             "options": {"temperature": 0},
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Artiste : {artist_name}\n\n{TEXT_LABELS[kind]} :\n{text}"},
+                {"role": "user", "content": f"Artiste : {artist_name}\n\n{TEXT_LABELS[kind]} :\n{numbered_text}"},
             ],
         },
         timeout=300,
     )
     resp.raise_for_status()
-    return ExtractionResult.model_validate_json(resp.json()["message"]["content"])
+    return LLMResult.model_validate_json(resp.json()["message"]["content"])
+
+
+def extract(client: httpx.Client, url: str, model: str, artist_name: str, chunks: list[str], kind: str,
+            ) -> tuple[ExtractionResult, Counter]:
+    """Interroge le LLM morceau par morceau. Renvoie les affirmations, citations = phrases originales,
+    et les rejets (numéro invalide, artiste absent de la phrase)."""
+    claims, rejected = [], Counter()
+    for chunk in chunks:
+        text, sentences = numbered(chunk)
+        if not sentences:
+            continue
+        found, bad = resolve_sentences(ask_llm(client, url, model, artist_name, text, kind), sentences)
+        claims.extend(found)
+        rejected.update(bad)
+    return ExtractionResult(claims=claims), rejected
 
 
 def texts_to_process(con: duckdb.DuckDBPyConnection, model: str, limit: int | None) -> list[tuple]:
-    """(mbid, nom, type de texte, texte envoyé) pas encore traités par cette version."""
+    """(mbid, nom, type de texte, morceaux à envoyer) pas encore traités par cette version."""
     rows = con.execute(
         """
         with texts as (
@@ -80,7 +101,7 @@ def texts_to_process(con: duckdb.DuckDBPyConnection, model: str, limit: int | No
         """,
         [model, EXTRACTOR_VERSION],
     ).fetchall()
-    out = [(m, n, k, wikipedia_passages(b) if k == "wikipedia" else b) for m, n, k, b in rows]
+    out = [(m, n, k, text_chunks(k, b)) for m, n, k, b in rows]
     return out[:limit] if limit else out
 
 
@@ -126,13 +147,14 @@ def main() -> None:
 
     total_kept, total_rejected = 0, Counter()
     with httpx.Client() as client:
-        for i, (mbid, name, kind, text) in enumerate(todo, 1):
+        for i, (mbid, name, kind, chunks) in enumerate(todo, 1):
             try:
-                raw = extract(client, s.ollama_url, s.ollama_model, name, text, kind)
+                raw, rejected = extract(client, s.ollama_url, s.ollama_model, name, chunks, kind)
             except Exception:
                 log.exception("Échec de l'extraction pour %s (%s)", name, kind)
                 continue
-            result, rejected = filter_claims(raw, text, name, genres, identity.get(mbid, set()))
+            result, filtered = filter_claims(raw, "\n".join(chunks), name, genres, identity.get(mbid, set()))
+            rejected.update(filtered)
             now = datetime.now(timezone.utc).replace(tzinfo=None)
             rows = [
                 (mbid, s.ollama_model, c.other_artist, c.relation, c.evidence_quote, c.confidence, now,
@@ -152,8 +174,8 @@ def main() -> None:
             )
             total_kept += len(result.claims)
             total_rejected.update(rejected)
-            log.info("[%s/%s] %s (%s) : %s gardée(s), %s rejetée(s) %s", i, len(todo), name, kind,
-                     len(result.claims), sum(rejected.values()), dict(rejected) or "")
+            log.info("[%s/%s] %s (%s, %s morceau(x)) : %s gardée(s), %s rejetée(s) %s", i, len(todo), name,
+                     kind, len(chunks), len(result.claims), sum(rejected.values()), dict(rejected) or "")
             log.debug(json.dumps(raw.model_dump(), ensure_ascii=False))
     log.info("Terminé : %s affirmation(s) gardée(s) ; rejets : %s", total_kept, dict(total_rejected))
     con.close()

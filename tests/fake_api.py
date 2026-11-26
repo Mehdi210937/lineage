@@ -47,16 +47,20 @@ Test Coven cite Old Drone Master as their main influence. Their slowed-down voca
 == Discography ==
 Hex EP (2010)"""
 
-# Ce que l'extracteur (v2, après ses filtres) pourrait tirer de ces textes, pour la base de démo :
+# Ce que l'extracteur (v3 : citation = phrase originale) pourrait tirer de ces textes, pour la démo :
 # (artiste, autre artiste tel qu'écrit par le LLM, relation, citation, confiance, texte source)
 DEMO_LLM_CLAIMS = [
-    (A, "Old Drone Master", "influenced_by", "très influencé par Old Drone Master", 0.9, "discogs"),
-    (A, "The Crypt-Sister", "compared_to", "Souvent comparé à Crypt Sister", 0.6, "discogs"),
+    (A, "Old Drone Master", "influenced_by",
+     "Duo formé en 2008, très influencé par Old Drone Master et la scène chopped and screwed.", 0.9, "discogs"),
+    (A, "The Crypt-Sister", "compared_to", "Souvent comparé à Crypt Sister pour ses voix noyées d'écho.", 0.6,
+     "discogs"),
     (A, "Far Away Band", "influenced", "Leur son a profondément marqué Far Away Band.", 0.6, "discogs"),
-    (A, "Lady Midnight", "sampled", "sample un vieux disque de Lady Midnight", 0.9, "discogs"),  # hors crawl
+    (A, "Lady Midnight", "sampled", "Le titre Hex sample un vieux disque de Lady Midnight.", 0.9,
+     "discogs"),  # hors crawl
     (A, "Old Drone Master", "influenced_by", "Test Coven cite Old Drone Master as their main influence.",
      0.9, "wikipedia"),
-    (A, "Nobody Known", "compared_to", "the minimal techno of Nobody Known", 0.6, "wikipedia"),  # hors crawl
+    (A, "Nobody Known", "compared_to", "Reviewers also hear the minimal techno of Nobody Known.", 0.6,
+     "wikipedia"),  # hors crawl
     # texte traité, aucune relation trouvée
     (B, None, None, None, None, "discogs"),
 ]

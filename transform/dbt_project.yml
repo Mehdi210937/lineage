@@ -25,4 +25,4 @@ vars:
   mb_placeholder_label_mbids: ["157afde4-4bf5-4039-8ad2-5a15acc85176"]
   # Version de l'extracteur LLM dont on garde les affirmations (= EXTRACTOR_VERSION dans
   # src/lineage/extract/run.py ; un test pytest vérifie qu'elles sont égales).
-  llm_extractor_version: "2"
+  llm_extractor_version: "3"

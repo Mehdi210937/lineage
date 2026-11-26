@@ -60,9 +60,12 @@ select
     to_artist_mbid,
     edge_type,
     source_system,
-    -- plusieurs citations pour une même arête : on garde la plus sûre
-    first(evidence order by confidence desc nulls last, evidence nulls last) as evidence,
-    first(evidence_source order by confidence desc nulls last, evidence nulls last) as evidence_source,
+    -- plusieurs citations pour une même arête : la plus sûre, et à confiance égale celle de
+    -- Wikipédia (plus explicite qu'une bio Discogs)
+    first(evidence order by confidence desc nulls last, evidence_source = 'wikipedia' desc, evidence nulls last)
+        as evidence,
+    first(evidence_source order by confidence desc nulls last, evidence_source = 'wikipedia' desc,
+        evidence nulls last) as evidence_source,
     max(confidence) as confidence
 from unioned
 where from_artist_mbid <> to_artist_mbid
